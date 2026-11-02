@@ -4,7 +4,8 @@
 #   scripts/release-build.sh v1.2.3 [os/arch ...]     default: linux/amd64 linux/arm64
 #
 # Builds are reproducible: static (CGO_ENABLED=0), -trimpath, and archives
-# with fixed ordering, ownership and timestamps. EXTRA_LDFLAGS is appended
+# with fixed ordering, ownership and timestamps. The web UI is built first
+# (needs Node.js and npm) and embedded in remnantd. EXTRA_LDFLAGS is appended
 # to the link flags (tests use it to trust a test signing key).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,6 +21,9 @@ EPOCH=$(git log -1 --format=%ct)
 DIST=${DIST:-dist}
 PKG=github.com/ljw097/remnant/internal/buildinfo
 LDFLAGS="-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT ${EXTRA_LDFLAGS:-}"
+
+# The web UI is embedded in remnantd; build it from the lockfile.
+(cd web && npm ci --no-audit --no-fund && npm run build) >&2
 
 rm -rf "$DIST"
 mkdir -p "$DIST"

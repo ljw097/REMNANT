@@ -7,7 +7,7 @@ import (
 
 const patternCols = `id, parent_pattern_id, source_kind, source_ref, title, vulnerability_class, cwe_id,
 	language, root_cause, preconditions, lifecycle_points, code_signatures, counter_signatures,
-	patch_semantics, version, validation_status, created_by, reviewed_by, reviewed_at, created_at`
+	patch_semantics, version, validation_status, created_by, reviewed_by, reviewed_at, created_at, self_reviewed`
 
 type PatternInput struct {
 	SourceKind         string
@@ -53,15 +53,24 @@ func (s *Store) SearchPatterns(ctx context.Context, q, class, language string) (
 }
 
 // ReviewPattern records a human review. "validated" additionally requires
-// at least one validated hypothesis derived from the pattern; the schema
-// forbids reviewing a pattern you authored.
-func (s *Store) ReviewPattern(ctx context.Context, id int64, status string, reviewer int64) (Pattern, error) {
+// at least one validated hypothesis derived from the pattern. Reviewing a
+// pattern you authored needs allowSelf (personal mode) and is recorded as
+// self_reviewed; the schema refuses it otherwise.
+func (s *Store) ReviewPattern(ctx context.Context, id int64, status string, reviewer int64, allowSelf bool) (Pattern, error) {
+	var author *int64
+	if err := s.pool.QueryRow(ctx, `SELECT created_by FROM patterns WHERE id = $1`, id).Scan(&author); err != nil {
+		return Pattern{}, mapErr(err)
+	}
+	self := author != nil && *author == reviewer
+	if self && !allowSelf {
+		return Pattern{}, fmt.Errorf("%w: another reviewer must review a pattern you authored", ErrForbidden)
+	}
 	p, err := one[Pattern](s.pool.Query(ctx, `
-		UPDATE patterns SET validation_status = $2, reviewed_by = $3, reviewed_at = now()
+		UPDATE patterns SET validation_status = $2, reviewed_by = $3, reviewed_at = now(), self_reviewed = $4
 		WHERE id = $1
 		  AND ($2 <> 'validated' OR EXISTS (
 		        SELECT 1 FROM hypotheses h WHERE h.pattern_id = patterns.id AND h.status = 'validated'))
-		RETURNING `+patternCols, id, status, reviewer))
+		RETURNING `+patternCols, id, status, reviewer, self))
 	if err == ErrNotFound {
 		if _, getErr := one[Pattern](s.pool.Query(ctx, `SELECT `+patternCols+` FROM patterns WHERE id = $1`, id)); getErr == nil {
 			return Pattern{}, fmt.Errorf("%w: pattern has no validated finding to support validation", ErrConflict)

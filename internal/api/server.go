@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -26,13 +27,26 @@ type Server struct {
 }
 
 // New builds the HTTP handler. updates may be nil (no update endpoints
-// beyond the version).
-func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.Manager) http.Handler {
+// beyond the version); ui is the built web app served at /.
+func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.Manager, ui fs.FS) http.Handler {
 	s := &Server{store: st, cfg: cfg, log: log, updates: updates}
 
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/me", s.me)
 	api.HandleFunc("GET /api/v1/system/version", s.version)
+	api.HandleFunc("GET /api/v1/me/preferences", s.getPreferences)
+	api.HandleFunc("PUT /api/v1/me/preferences", s.setPreferences)
+	api.HandleFunc("PUT /api/v1/branding", s.requireRole(s.setBranding, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/summary", s.summary)
+	api.HandleFunc("GET /api/v1/approvals", s.listApprovals)
+	api.HandleFunc("GET /api/v1/hypotheses", s.searchHypotheses)
+	api.HandleFunc("GET /api/v1/users", s.listUsers)
+	api.HandleFunc("POST /api/v1/users", s.requireRole(s.createUser, auth.RoleAdmin))
+	api.HandleFunc("PATCH /api/v1/users/{id}", s.requireRole(s.updateUser, auth.RoleAdmin))
+	api.HandleFunc("POST /api/v1/users/{id}/tokens", s.requireRole(s.issueToken, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/instance", s.getInstance)
+	api.HandleFunc("PUT /api/v1/instance", s.requireRole(s.setInstance, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/patterns/{id}", s.getPattern)
 	api.HandleFunc("POST /api/v1/system/update", s.requireRole(s.applyUpdate, auth.RoleAdmin))
 
 	api.HandleFunc("GET /api/v1/llm-profiles", s.listLLMProfiles)
@@ -75,7 +89,15 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	// Public: the sign-in and first-run pages need these before any token exists.
+	root.HandleFunc("GET /api/v1/branding", s.getBranding)
+	root.HandleFunc("GET /api/v1/setup", s.getSetup)
+	root.HandleFunc("POST /api/v1/setup", s.postSetup)
 	root.Handle("/api/", auth.Middleware(st, api))
+	if ui != nil {
+		// Registered without a method: "GET /" would conflict with "/api/".
+		root.Handle("/", staticUI(ui))
+	}
 	return securityHeaders(root)
 }
 

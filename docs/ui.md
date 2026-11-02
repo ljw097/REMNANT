@@ -1,57 +1,56 @@
-# REMNANT web UI specification
+# REMNANT web UI
 
-The UI is a separate static single-page application that talks only to `remnantd`'s `/api/v1`. It can be served by any static host or reverse proxy alongside remnantd; it has no server-side component and no credentials of its own.
+The web UI is a single-page app (React + Vite, TypeScript) in `web/`. `npm run build` writes `web/dist`, which is embedded into `remnantd` with `go:embed`, so the same binary serves the UI at `/` and the API at `/api/v1`. It has no server-side component and no credentials of its own. A binary built without `web/dist` serves a short page that says how to build it.
+
+```sh
+cd web && npm ci && npm run build   # then go build ./cmd/remnantd
+npm run dev                         # Vite dev server; proxies /api to $REMNANT_DEV_API (default 127.0.0.1:8080)
+npm test                            # unit tests (vitest)
+REMNANT_DEMO_DATABASE_URL=postgres://.../scratch scripts/dev-demo.sh   # UI with synthetic data
+```
+
+## Serving
+
+- Unknown paths that are not files get `index.html`, so deep links work. Files under `/assets/` are content-hashed and cached for a year.
+- Every UI response carries a strict CSP (`default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; …`), `X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`. The app uses no inline scripts or styles and never sets `innerHTML`; the only runtime styling is the branding accent, set through the CSSOM.
+- The UI build is reproducible; release archives embed it.
+
+## First run: team or personal
+
+While no users exist, `remnantd serve` prints a one-time setup code to its log (valid 24 hours, burned after 10 wrong attempts). Opening the UI shows the setup page, which asks for the code, the administrator's username, an optional instance name, and the operating mode:
+
+- **Team** — the two-person rules apply: nobody approves their own lab request or reviews their own pattern. Use this when more than one person works on the instance.
+- **Personal** — one person may do both. Every such decision is still recorded, as `self_approved` / `self_reviewed`, and the chain of custody says so.
+
+`remnantd setup -mode team|personal -username NAME [-name INSTANCE]` does the same from the command line and prints the administrator's token. An administrator can switch modes later under Settings → Operating mode; the switch applies to decisions made afterwards. Instances that already had users when this was introduced start in team mode.
 
 ## Sign-in
 
-The user pastes a bearer token issued by `remnantd create-user` / `create-token`. The UI calls `GET /me`, shows the username and role, and keeps the token in memory (optionally `sessionStorage`). Actions the role cannot perform are hidden; the server enforces them regardless.
+The user pastes a bearer token. The UI calls `GET /me`, keeps the token in `sessionStorage` (this tab only), and hides actions the role cannot perform; the server enforces them regardless. Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming body reader, so the token stays in the `Authorization` header; reconnects send `Last-Event-ID`.
 
-Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming body reader, so the token stays in the `Authorization` header. On reconnect, send the last seen event ID as `Last-Event-ID`.
+## Customisation
 
-## Pages
+- **Per user** (`/me/preferences`, follows the user to other devices): theme (system/light/dark), density, language (Korean/English), start page, dashboard panels and their order, and table columns.
+- **Role-aware defaults**: reviewers start on Review with "Waiting for you" first; researchers see runs first; administrators also get the System panel.
+- **Organization** (admin, `/branding`): instance name and accent colour. The accent is used only for actionable controls; the UI warns when it is unreadable on white.
 
-### 1. Dashboard — `/`
+## Screens
 
-Cards: active runs, targets, hypotheses awaiting triage, validated findings, pending approvals, recent activity. Every number comes from the API; no placeholder counters.
+| Path | Purpose |
+|---|---|
+| `/` | Dashboard: waiting for you (triage and lab approvals), runs in motion as transit lines, recent findings, recent runs, projects, system. |
+| `/review` | Hypotheses waiting for a decision, highest priority first. In a review session `J`/`K` move, `A`/`R`/`D` accept, reject or mark duplicate, `V`/`N` record validated / not reproducible. |
+| `/hypotheses/{id}` | Claim, facts, preconditions, unknowns, expected observation; line-numbered evidence with revision digests; counter-evidence with the skeptic's verdict; chain of custody; the decision bar. Researchers request lab validation from here. |
+| `/approvals` | Pending and decided lab approvals. The drawer shows the exact scope (operation, target, revision, limits, network none, scope hashes) and its custody. A 409 means the request went stale. |
+| `/runs`, `/runs/{id}` | Runs list; run detail with an RFC-style header (revision, scope hash, model, tokens, time), the stage line, scope and policy, and tabs for hypotheses, experiments, live activity and artifacts. Pause, resume, cancel and finalize. |
+| `/runs/new` | Project, ready targets, patterns, limits; the confirmation lists every target with its revision and the read-only/no-network policy. |
+| `/findings` | Validated findings and those awaiting lab results. |
+| `/projects`, `/projects/{id}` | Projects, policy, and targets (local snapshots or pinned Git repositories). |
+| `/patterns`, `/patterns/{id}` | Root-cause pattern library with review state and custody. |
+| `/settings/*` | Preferences, dashboard, account; for administrators: operating mode, users (roles, disable, new tokens shown once), model profiles (API key entered once, never shown), branding, system and updates. |
 
-### 2. Projects — `/projects`
+Desktop and laptop get the sidebar; on phones the sidebar becomes a menu, tables scroll inside their panel, and approvals and run status are fully usable.
 
-Columns: name, target count, active runs, model profile, updated, status. The project drawer shows description, model profile selector and the policy:
+## State vocabulary
 
-- Source access: read-only (fixed).
-- Worker network: none (fixed).
-- Dynamic testing: `disabled` (default) or `local_lab_only`. Switching to `local_lab_only` shows a confirmation explaining that it allows approved local experiments.
-
-### 3. Targets — `/projects/{id}/targets`
-
-Form fields: kind, display name, snapshot key, primary language; for `git_repository`, the https URL and ref. The form never accepts a filesystem path. Show revision, tree digest and status; a `pending` Git target explains that it awaits pinning.
-
-### 4. Knowledge base — `/patterns`
-
-Search by text, vulnerability class and language. Detail: source reference, root cause, preconditions, lifecycle points, code signatures, counter-signatures, patch semantics, version, review status, author and reviewer. Reviewers get Review / Validate / Reject; Validate is disabled until a validated hypothesis derives from the pattern, and hidden for the pattern's author.
-
-### 5. New run — `/runs/new`
-
-Fields: project, 1–10 ready targets, patterns, model profile (defaults to the project's), workers (1–4, default 2), wall time (60–3600 s, default 900), output-token budget (4 000–2 000 000, default 200 000). The confirmation step lists every target with its revision and states the read-only/no-network policy.
-
-### 6. Run detail — `/runs/{id}`
-
-Tabs: Overview (status, pinned targets and revisions, scope hash, hypothesis counts, token usage), Hypotheses, Evidence, Experiments (`GET /runs/{id}/experiments`), Activity (live SSE), Artifacts (download through `GET /runs/{id}/artifacts/{artifactId}`). A run can never change its targets or policy after creation.
-
-When the run is `review_required`, show **Finalize report**; it is disabled while lab approvals are pending. While a run is waiting or in an automatic stage, show **Pause**; a paused run shows **Resume** and its resume stage. Show `attempts` when a run was recovered after a crash.
-
-### 7. Hypothesis — `/hypotheses/{id}`
-
-Show claim, class/CWE, affected symbols, preconditions, expected observation, evidence with file/line and revision, counter-evidence and triage confidence. Show the Skeptic's verdict next to the triage priority, and facts and unknowns as separate lists. Reviewer actions: Accept, Reject, Duplicate, with a note; on a `validation_pending` hypothesis with a finished lab experiment, Validated or Not reproducible. Researcher action on an accepted hypothesis: Request lab validation, which opens the approval request form (lab operation, limits, summary); it never starts anything.
-
-### 8. Approvals — `/approvals`
-
-List pending approvals. The drawer shows the full `scope` object (target, revision, run scope hash, limits, network `none`), the summary, requester and expiry. Reviewers who are not the requester can Approve or Deny with a note. A 409 response means the approval went stale; show why and offer to request a new one.
-
-### 9. Findings and reports — `/findings`
-
-Separate candidate hypotheses from validated findings. Exports (Markdown/JSON) include evidence IDs, file/line references, revisions, analyzer versions, lab commands, reproduction status, counter-evidence, limitations and remediation notes.
-
-### 10. Model profiles — `/settings/models` (admin)
-
-List profiles with provider, model, effort and key hint. Create form takes the API key once; it is never displayed again.
+Every state has a tone and a line form, so it never depends on colour alone: solid (settled), dashed with a hollow dot (waiting — on a person or on a queue), live (an automatic stage is working), struck (stopped). The design system is recorded in `DESIGN.md`.

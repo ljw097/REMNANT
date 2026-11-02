@@ -84,7 +84,7 @@ func (s *Server) reviewPattern(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) || !validate(w, oneOf("status", in.Status, "reviewed", "validated", "rejected")) {
 		return
 	}
-	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID)
+	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID, s.personal(r.Context()))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -448,7 +448,7 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		!validate(w, oneOf("decision", in.Decision, "approved", "denied"), maxLen("reviewer_note", in.ReviewerNote, 8000)) {
 		return
 	}
-	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote)
+	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote, s.personal(r.Context()))
 	if err != nil {
 		s.fail(w, r, err)
 		return

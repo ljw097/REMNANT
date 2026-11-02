@@ -337,7 +337,7 @@ func TestFullLifecycle(t *testing.T) {
 	must(t, err)
 	appr, err := e.st.RequestLabApproval(e.ctx, h.ID, e.alice, "lab.asan_test", policy.DefaultLabLimits(), "ASan unit test", time.Hour)
 	must(t, err)
-	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "ok")
+	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "ok", false)
 	must(t, err)
 
 	e.runOnce(o)
@@ -353,7 +353,7 @@ func TestFullLifecycle(t *testing.T) {
 	}
 	_, err = e.st.TriageHypothesis(e.ctx, h.ID, research.DecisionValidated, "reproduced", e.bob)
 	must(t, err)
-	_, err = e.st.ReviewPattern(e.ctx, e.patternID, "validated", e.bob)
+	_, err = e.st.ReviewPattern(e.ctx, e.patternID, "validated", e.bob, false)
 	must(t, err)
 
 	// Finalize and report.
@@ -509,7 +509,7 @@ func TestLabWithoutWorkerReturnsHypothesis(t *testing.T) {
 	must(t, err)
 	appr, err := e.st.RequestLabApproval(e.ctx, hs[0].ID, e.alice, "lab.unit_test", policy.DefaultLabLimits(), "unit test", time.Hour)
 	must(t, err)
-	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "")
+	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "", false)
 	must(t, err)
 	e.runOnce(o)
 	h, _ := e.st.GetHypothesis(e.ctx, hs[0].ID)
@@ -671,7 +671,7 @@ func TestPauseDuringLabHandsHypothesisBack(t *testing.T) {
 	must(t, err)
 	appr, err := e.st.RequestLabApproval(e.ctx, hs[0].ID, e.alice, "lab.asan_test", policy.DefaultLabLimits(), "asan", time.Hour)
 	must(t, err)
-	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "")
+	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "", false)
 	must(t, err)
 
 	done := make(chan struct{})
@@ -792,5 +792,117 @@ func TestGitTargetIsFetchedThenAnalysed(t *testing.T) {
 	e.runOnce(o)
 	if s, summary := e.status(run2.ID); s != research.RunFailed || !strings.Contains(summary, "changed on disk") {
 		t.Fatalf("tampered checkout: %s (%s)", s, summary)
+	}
+}
+
+// Team mode refuses self-decisions; personal mode allows them only as a
+// recorded exception, and the database refuses an unrecorded one.
+func TestDeploymentModes(t *testing.T) {
+	e := setup(t)
+	o := e.orchestrator(&fakeModel{}, nil)
+	runID := e.newRun(200000)
+	e.runOnce(o)
+	hs, _ := e.st.ListHypotheses(e.ctx, runID)
+	_, err := e.st.TriageHypothesis(e.ctx, hs[0].ID, research.DecisionAccepted, "", e.bob)
+	must(t, err)
+	appr, err := e.st.RequestLabApproval(e.ctx, hs[0].ID, e.alice, "lab.unit_test", policy.DefaultLabLimits(), "x", time.Hour)
+	must(t, err)
+
+	if _, err := e.st.DecideApproval(e.ctx, appr.ID, e.alice, true, "", false); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("team mode self-approval: %v", err)
+	}
+	if _, err := e.db.Exec(e.ctx, `UPDATE remnant.approvals SET decision = 'approved', decided_by = requested_by WHERE id = $1`, appr.ID); err == nil {
+		t.Fatal("the database accepted an unmarked self-approval")
+	}
+	a, err := e.st.DecideApproval(e.ctx, appr.ID, e.alice, true, "solo", true)
+	must(t, err)
+	if !a.SelfApproved || a.DecidedBy == nil || *a.DecidedBy != e.alice {
+		t.Fatalf("personal-mode approval = %+v", a)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.events WHERE run_id = $1 AND message LIKE '%personal mode%'`, runID); n != 1 {
+		t.Error("self-approval not recorded in the timeline")
+	}
+
+	if _, err := e.st.ReviewPattern(e.ctx, e.patternID, "reviewed", e.alice, false); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("team mode self-review: %v", err)
+	}
+	p, err := e.st.ReviewPattern(e.ctx, e.patternID, "reviewed", e.alice, true)
+	must(t, err)
+	if !p.SelfReviewed {
+		t.Fatal("self-review not recorded")
+	}
+	p, err = e.st.ReviewPattern(e.ctx, e.patternID, "reviewed", e.bob, true)
+	must(t, err)
+	if p.SelfReviewed {
+		t.Fatal("a review by someone else marked as self-review")
+	}
+
+	mode, err := e.st.DeploymentMode(e.ctx)
+	must(t, err)
+	if mode != store.ModeTeam {
+		t.Fatalf("default mode %q, want team", mode)
+	}
+	must(t, e.st.SetDeploymentMode(e.ctx, store.ModePersonal, e.alice))
+	if mode, _ = e.st.DeploymentMode(e.ctx); mode != store.ModePersonal {
+		t.Fatalf("mode %q after switching", mode)
+	}
+}
+
+func TestFirstRunSetup(t *testing.T) {
+	e := setup(t)
+	if _, err := e.db.Exec(e.ctx, `TRUNCATE remnant.users CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	code, err := e.st.NewSetupCode(e.ctx, time.Hour)
+	must(t, err)
+	if len(code) != 14 || strings.Count(code, "-") != 2 {
+		t.Fatalf("setup code %q", code)
+	}
+
+	_, _, err = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModePersonal, Username: "solo", Code: "AAAA-BBBB-CCCC"})
+	if !errors.Is(err, store.ErrSetupCode) {
+		t.Fatalf("wrong code: %v", err)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.instance_settings WHERE key = 'setup_code' AND (value->>'failures')::int = 1`); n != 1 {
+		t.Fatal("failed attempt not counted")
+	}
+	u, token, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModePersonal, Username: "solo", Code: strings.ToLower(code)})
+	must(t, err)
+	if u.Role != "admin" || !strings.HasPrefix(token, "rmt_") {
+		t.Fatalf("setup user %+v token %q", u, token)
+	}
+	p, err := e.st.LookupToken(e.ctx, auth.Digest(token))
+	if err != nil || p.UserID != u.ID {
+		t.Fatalf("setup token does not authenticate: %v", err)
+	}
+	if mode, _ := e.st.DeploymentMode(e.ctx); mode != store.ModePersonal {
+		t.Fatalf("mode %q", mode)
+	}
+	if _, _, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "second", TrustedLocal: true}); !errors.Is(err, store.ErrSetupDone) {
+		t.Fatalf("second setup: %v", err)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.instance_settings WHERE key = 'setup_code'`); n != 0 {
+		t.Fatal("setup code survived setup")
+	}
+
+	// Too many wrong codes burn the code, even a later right one.
+	if _, err := e.db.Exec(e.ctx, `TRUNCATE remnant.users CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	code, _ = e.st.NewSetupCode(e.ctx, time.Hour)
+	for range 10 {
+		_, _, _ = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "x1", Code: "WRONG"})
+	}
+	if _, _, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "x1", Code: code}); !errors.Is(err, store.ErrSetupCode) {
+		t.Fatalf("code after 10 failures: %v", err)
+	}
+
+	// The last active administrator cannot be demoted or disabled.
+	_, token, err = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "boss", TrustedLocal: true})
+	must(t, err)
+	boss, _ := e.st.LookupToken(e.ctx, auth.Digest(token))
+	off := true
+	if _, err := e.st.UpdateUser(e.ctx, boss.UserID, store.UserPatch{Disabled: &off}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("disabling the last admin: %v", err)
 	}
 }
