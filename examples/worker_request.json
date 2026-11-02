@@ -1,0 +1,28 @@
+{
+  "protocol": "remnant.worker.v1",
+  "message": "request",
+  "request_id": "req_demo_0001",
+  "run_id": 42,
+  "operation": "static.semgrep",
+  "workspace": {
+    "mount_id": "target_4",
+    "relative_root": ".",
+    "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "inputs": {
+    "rule_pack": "builtin-c-reviewed-v1",
+    "file_globs": ["**/*.c", "**/*.h"]
+  },
+  "limits": {
+    "wall_seconds": 180,
+    "memory_mb": 2048,
+    "cpu_cores": 2,
+    "max_output_bytes": 5000000,
+    "max_processes": 32
+  },
+  "policy": {
+    "filesystem": "workspace_read_only_output_write_only",
+    "network": "none",
+    "subprocess": "allowlisted_tool_only"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "protocol": "remnant.worker.v1",
+  "message": "result",
+  "request_id": "req_demo_0001",
+  "status": "completed",
+  "exit_code": 0,
+  "summary": "Analysis completed; 1 candidate diagnostic emitted",
+  "observations": [
+    {
+      "kind": "static_finding",
+      "rule_id": "REMNANT-C-STATE-001",
+      "file_path": "src/parser.c",
+      "line_start": 120,
+      "line_end": 133,
+      "message": "State publication and cleanup ordering requires review",
+      "tool_confidence": "medium"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "project_id": 1,
+  "target_ids": [4],
+  "pattern_ids": [2, 7],
+  "mode": "source_only",
+  "llm_profile_id": 1,
+  "limits": {
+    "max_workers": 2,
+    "wall_seconds": 900,
+    "max_tokens": 12000
+  }
+}
