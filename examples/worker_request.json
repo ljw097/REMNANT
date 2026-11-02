@@ -7,7 +7,7 @@
   "workspace": {
     "mount_id": "target_4",
     "relative_root": ".",
-    "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+    "revision": "0123456789abcdef0123456789abcdef01234567"
   },
   "inputs": {
     "rule_pack": "builtin-c-reviewed-v1",

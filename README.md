@@ -1,42 +1,118 @@
-# REMNANT for ARTEX — implementation specification
+# REMNANT
 
-Version: 0.1.0  
-Status: implementation-ready design package; not yet applied to the upstream repository.
+Source-first vulnerability research server.
 
-## Scope
+REMNANT turns historical vulnerability root causes into reusable patterns, maps them onto pinned source snapshots, records falsifiable hypotheses with evidence, and gates any dynamic validation behind a human approval bound to an exact revision and resource scope.
 
-REMNANT is a source-first vulnerability-research subsystem for ARTEX. It correlates historical vulnerability root causes with source-code structures, creates evidence-backed hypotheses, runs static analysis, and can request bounded dynamic validation inside an isolated local lab.
+It is a standalone service: one Go binary (`remnantd`) and one PostgreSQL database. It owns its users, tokens, model credentials, schema and API.
 
-The initial release intentionally does **not** provide arbitrary-target scanning, remote exploitation, shell access, credential collection, or data-exfiltration workflows. Targets are source repositories or local intentionally vulnerable fixtures owned by the operator or explicitly authorized for review. Dynamic validation is restricted to a local sandbox with network disabled.
+It does **not** scan arbitrary hosts, run remote exploits, open shells, collect credentials or exfiltrate data. Targets are source snapshots the operator owns or is authorised to review. Dynamic validation is local-only, network-less, off by default and needs approval from a second person.
 
-## Repository assumptions verified against `jiwoochris/artex-global` (2026-11-02)
+## Status
 
-- Backend: Go `net/http`, single binary, JWT auth and SSE.
-- Frontend: Next.js, statically built and embedded in the Go binary.
-- Database: PostgreSQL via `pgx`; `db/schema.sql` is idempotently executed at startup.
-- Existing architecture: task engine, planner/workers, `tasks`, `llm_profiles`, tool/agent configuration, asset graph and per-task exploration graph.
-- Existing LLM profile schema includes provider format, endpoint, model, API key and key hint fields. REMNANT references a profile ID; it must not introduce a second independent API-key store.
+| Component | State |
+|---|---|
+| Schema and migrations (`remnant` schema) | implemented |
+| Auth: users, roles, hashed bearer tokens | implemented |
+| Model profiles with keys encrypted at rest (AES-256-GCM) | implemented |
+| REST API + SSE run timeline (`/api/v1`) | implemented |
+| Local snapshot targets pinned by tree digest | implemented |
+| Run creation with scope hash, cancel, triage, lab approvals | implemented |
+| Worker protocol types and validation | implemented |
+| Anthropic model client (structured JSON output) | implemented |
+| Run orchestrator: indexing, pattern matching, Researcher/Skeptic agents, lab dispatch, reports | implemented |
+| Git fetcher (pins `git_repository` targets) | **not yet**: they stay `pending` |
+| Sandboxed worker runtime | **not yet**: protocol only, so static analysis is skipped and approved lab experiments are recorded as not run |
+| Web UI | **not yet**: see `docs/ui.md` |
 
-See `docs/integration.md` for integration points and caveats.
+## Quick start
 
-## Files
+Requirements: Go ≥ 1.25 and PostgreSQL ≥ 14.
 
-- `db/001_remnant.sql` — PostgreSQL additive schema.
-- `api/openapi.yaml` — REST and SSE contract.
-- `docs/architecture.md` — component and lifecycle design.
-- `docs/ui.md` — concrete Next.js page and control specification.
-- `docs/agent-contracts.md` — agent roles, inputs, outputs and acceptance rules.
-- `worker/protocol.md` — versioned JSONL worker protocol and isolation contract.
-- `internal/research/contracts.go` — Go interfaces and typed DTO skeleton.
-- `examples/` — example run request and worker messages.
+```sh
+go build -o remnantd ./cmd/remnantd
 
-## Apply order
+export REMNANT_DATABASE_URL='postgres://remnant@localhost/remnant'
+export REMNANT_MASTER_KEY="$(head -c32 /dev/urandom | base64)"   # keep this safe: it decrypts model keys
+export REMNANT_DATA_DIR=/var/lib/remnant
 
-1. Back up PostgreSQL.
-2. Add the SQL block from `db/001_remnant.sql` to the end of ARTEX's `db/schema.sql` (the repository currently re-runs that schema idempotently at startup), or wire it into the same startup migration loader.
-3. Add the Go package under `internal/research/` and register the API routes behind ARTEX's existing JWT middleware.
-4. Add the dedicated worker runner. Do not expose the existing generic pentest tool set to REMNANT agents.
-5. Add the Next.js pages under the existing application route conventions.
-6. Build and test before enabling the feature on a network-accessible instance.
+./remnantd migrate
+./remnantd create-user -username admin -role admin    # prints a bearer token once
+./remnantd serve
+```
 
-This package is a specification and schema starter, not a claim that the GitHub repository has been modified or that the code compiles against the current private/local checkout. Route registration and store construction must be adapted to the exact checked-out commit.
+```sh
+TOKEN=rmt_...
+curl -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/me
+
+# register a model profile (admin)
+curl -H "Authorization: Bearer $TOKEN" -d '{"name":"default","provider":"anthropic","model":"claude-opus-5-5","api_key":"sk-ant-..."}' \
+  localhost:8080/api/v1/llm-profiles
+
+# put a source tree under $REMNANT_DATA_DIR/snapshots/<key> and register it
+curl -H "Authorization: Bearer $TOKEN" -d '{"name":"libdemo","llm_profile_id":1}' localhost:8080/api/v1/projects
+curl -H "Authorization: Bearer $TOKEN" -d '{"kind":"local_snapshot","display_name":"libdemo 1.2","snapshot_key":"libdemo-1.2"}' \
+  localhost:8080/api/v1/projects/1/targets
+```
+
+Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`POST /runs`, see `examples/create_run.json`). The orchestrator inside `remnantd serve` picks it up and drives it to `review_required`; follow it with `GET /runs/{id}/events`. After triage, `POST /runs/{id}/finalize` produces the report. See `api/openapi.yaml` for the rest.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMNANT_DATABASE_URL` | — (required) | PostgreSQL connection string |
+| `REMNANT_MASTER_KEY` | — (required) | base64 of 32 random bytes; encrypts model API keys |
+| `REMNANT_LISTEN` | `127.0.0.1:8080` | HTTP listen address |
+| `REMNANT_DATA_DIR` | `./data` | snapshots live in `<dir>/snapshots/<key>` |
+| `REMNANT_REPO_HOSTS` | empty | comma-separated https hosts allowed for `git_repository` targets; empty disables them |
+| `REMNANT_ORCHESTRATOR` | `on` | `off` serves the API without working runs (e.g. for a separate worker instance later) |
+| `REMNANT_ORCHESTRATOR_CONCURRENCY` | `2` | runs worked on at once per instance (1–16) |
+
+## Layout
+
+```text
+cmd/remnantd/          server entry point and admin subcommands
+internal/config/       environment configuration
+internal/auth/         roles, bearer tokens, middleware
+internal/secrets/      AES-256-GCM sealing of stored credentials
+internal/policy/       project policy, run and lab scope hashes
+internal/research/     run state machine, triage rules, run limits
+internal/source/       repository allowlist, snapshot keys, tree digests
+internal/worker/       JSONL worker protocol and result validation
+internal/llm/          model client (Anthropic SDK, schema-constrained JSON)
+internal/orchestrator/ run pipeline: leases, indexing, agents, lab dispatch, reports
+internal/store/        PostgreSQL access; migrations/ is embedded
+internal/api/          HTTP handlers and SSE
+api/openapi.yaml       API contract
+docs/                  architecture, agent contracts, worker protocol, security, UI
+scripts/smoke.sh       end-to-end test against a disposable database
+scripts/fake_anthropic.py  local model-API stand-in used by smoke.sh
+```
+
+## Dependencies
+
+Direct dependencies are deliberately few:
+
+- `github.com/jackc/pgx/v5`: PostgreSQL driver and pool
+- `github.com/anthropics/anthropic-sdk-go/v2`: model client
+
+Everything else (HTTP routing, auth, crypto, SSE, migrations) uses the Go standard library.
+
+## Testing
+
+```sh
+go test ./...                                                             # unit tests, no database needed
+REMNANT_TEST_DATABASE_URL=postgres://.../scratch go test ./internal/orchestrator/  # pipeline against PostgreSQL
+REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/smoke.sh                # binary + API + orchestrator
+```
+
+Both database-backed suites DROP the `remnant` schema in the database they are given. Neither needs network access or a real model key.
+
+## Documents
+
+- `docs/architecture.md`: components, run lifecycle, data model
+- `docs/security.md`: authentication, secrets, isolation, deployment hardening
+- `docs/agent-contracts.md`: agent roles, outputs, promotion rules
+- `docs/worker-protocol.md`: worker JSONL protocol v1 and isolation contract
+- `docs/ui.md`: web UI specification
