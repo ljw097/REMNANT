@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/config"
+	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/llm"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/research"
@@ -709,5 +712,85 @@ func TestStaleRunningExperimentsAreCancelledOnClaim(t *testing.T) {
 	// The static operation still ran once in this attempt.
 	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE run_id = $1 AND status = 'passed'`, runID); n != 1 {
 		t.Error("static operation did not run")
+	}
+}
+
+func TestGitTargetIsFetchedThenAnalysed(t *testing.T) {
+	e := setup(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	gitRun := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	gitRun("init", "-q", "-b", "main")
+	must(t, os.MkdirAll(filepath.Join(repo, "src"), 0o755))
+	must(t, os.WriteFile(filepath.Join(repo, "src", "parser.c"), []byte(parserC), 0o644))
+	gitRun("add", ".")
+	gitRun("commit", "-q", "-m", "import")
+	head := gitRun("rev-parse", "HEAD")
+
+	o := e.orchestrator(&fakeModel{}, nil)
+	o.opts.Fetcher = &fetch.Fetcher{
+		SnapshotDir: e.cfg.SnapshotDir(), AllowedHosts: []string{"git.example.test"},
+		LookupIP: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		GitConfig: []string{"url." + repo + ".insteadOf=https://git.example.test/org/repo", "protocol.file.allow=always"},
+	}
+	good, err := e.st.CreateTarget(e.ctx, e.projectID, store.TargetInput{Kind: "git_repository", DisplayName: "upstream",
+		SourceURI: "https://git.example.test/org/repo", SourceRef: "main", SnapshotKey: "upstream-main", Status: "pending"})
+	must(t, err)
+	bad, err := e.st.CreateTarget(e.ctx, e.projectID, store.TargetInput{Kind: "git_repository", DisplayName: "missing",
+		SourceURI: "https://git.example.test/org/repo", SourceRef: "no-such-branch", SnapshotKey: "upstream-missing", Status: "pending"})
+	must(t, err)
+
+	for i := 0; i < 2; i++ {
+		if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+			t.Fatalf("FetchOnce = %v, %v", ok, err)
+		}
+	}
+	if ok, _ := o.FetchOnce(e.ctx); ok {
+		t.Fatal("nothing should be left to fetch")
+	}
+	got, err := e.st.GetTarget(e.ctx, good.ID)
+	must(t, err)
+	if got.Status != "ready" || got.Revision != head || got.TreeSHA256 == "" {
+		t.Fatalf("fetched target = %+v", got)
+	}
+	failed, _ := e.st.GetTarget(e.ctx, bad.ID)
+	if failed.Status != "unavailable" || !strings.Contains(string(failed.Metadata), "fetch_error") {
+		t.Fatalf("failed target = %+v", failed)
+	}
+
+	run, err := e.st.CreateRun(e.ctx, store.RunInput{ProjectID: e.projectID, TargetIDs: []int64{good.ID},
+		PatternIDs: []int64{e.patternID}, Limits: research.Limits{MaxWorkers: 1, WallSeconds: 120, MaxTokens: 200000}}, e.alice)
+	must(t, err)
+	e.runOnce(o)
+	if s, summary := e.status(run.ID); s != research.RunReviewRequired {
+		t.Fatalf("run on fetched target: %s (%s)", s, summary)
+	}
+	hs, _ := e.st.ListHypotheses(e.ctx, run.ID)
+	if len(hs) != 1 {
+		t.Fatalf("%d hypotheses on the fetched target", len(hs))
+	}
+
+	// Tampering with the checkout is detected by the next run.
+	must(t, os.WriteFile(filepath.Join(e.cfg.SnapshotDir(), "upstream-main", "src", "parser.c"), []byte("int x;\n"), 0o644))
+	run2, err := e.st.CreateRun(e.ctx, store.RunInput{ProjectID: e.projectID, TargetIDs: []int64{good.ID},
+		PatternIDs: []int64{e.patternID}, Limits: research.Limits{MaxWorkers: 1, WallSeconds: 120, MaxTokens: 200000}}, e.alice)
+	must(t, err)
+	e.runOnce(o)
+	if s, summary := e.status(run2.ID); s != research.RunFailed || !strings.Contains(summary, "changed on disk") {
+		t.Fatalf("tampered checkout: %s (%s)", s, summary)
 	}
 }

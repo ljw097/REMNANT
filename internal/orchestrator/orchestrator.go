@@ -17,9 +17,11 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ljw097/remnant/internal/config"
+	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/llm"
 	"github.com/ljw097/remnant/internal/research"
 	"github.com/ljw097/remnant/internal/store"
@@ -43,14 +45,17 @@ type Options struct {
 	PollInterval time.Duration
 	// LeaseTTL is how long a claim lasts without a heartbeat. Default 30s.
 	LeaseTTL time.Duration
+	// Fetcher pins pending git_repository targets. nil leaves them pending.
+	Fetcher *fetch.Fetcher
 }
 
 type Orchestrator struct {
-	store *store.Store
-	cfg   config.Config
-	log   *slog.Logger
-	opts  Options
-	owner string
+	store    *store.Store
+	cfg      config.Config
+	log      *slog.Logger
+	opts     Options
+	owner    string
+	fetching atomic.Bool
 }
 
 func New(st *store.Store, cfg config.Config, log *slog.Logger, opts Options) *Orchestrator {
@@ -92,6 +97,7 @@ func (o *Orchestrator) Run(ctx context.Context) {
 			o.log.Warn("recovered runs whose orchestrator died", "requeued", requeued, "failed", failed)
 		}
 		o.fill(ctx, sem, &wg)
+		o.startFetching(ctx, &wg)
 		select {
 		case <-ctx.Done():
 			return
@@ -122,6 +128,61 @@ func (o *Orchestrator) fill(ctx context.Context, sem chan struct{}, wg *sync.Wai
 			o.work(ctx, id, status)
 		}()
 	}
+}
+
+// startFetching pins pending git targets in the background, one at a time,
+// so slow clones never hold up run claiming.
+func (o *Orchestrator) startFetching(ctx context.Context, wg *sync.WaitGroup) {
+	if o.opts.Fetcher == nil || !o.fetching.CompareAndSwap(false, true) {
+		return
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer o.fetching.Store(false)
+		for ctx.Err() == nil {
+			ok, err := o.FetchOnce(ctx)
+			if err != nil && ctx.Err() == nil {
+				o.log.Error("fetch target", "err", err)
+			}
+			if !ok || err != nil {
+				return
+			}
+		}
+	}()
+}
+
+// FetchOnce pins one pending git target and reports whether there was one.
+// A fetch that fails marks the target unavailable with the reason.
+func (o *Orchestrator) FetchOnce(ctx context.Context) (bool, error) {
+	f := o.opts.Fetcher
+	if f == nil {
+		return false, nil
+	}
+	timeout := f.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	t, err := o.store.ClaimPendingFetch(ctx, o.owner, timeout+time.Minute)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	log := o.log.With("target", t.ID, "source", t.SourceURI, "ref", t.SourceRef)
+	commit, digest, ferr := f.Fetch(ctx, t.SourceURI, t.SourceRef, t.SnapshotKey)
+	bg, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer done()
+	if ferr != nil {
+		if ctx.Err() != nil {
+			return true, nil // shutting down; the lease expires and another fetch retries
+		}
+		log.Warn("target fetch failed", "err", ferr)
+		return true, o.store.FailFetch(bg, t.ID, o.owner, ferr.Error())
+	}
+	log.Info("target pinned", "commit", commit)
+	return true, o.store.CompleteFetch(bg, t.ID, o.owner, commit, digest)
 }
 
 // RunOnce claims one run and works it to the end of its current phase. It

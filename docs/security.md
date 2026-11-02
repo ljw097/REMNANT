@@ -23,6 +23,8 @@ Roles are checked per route (see `architecture.md`). Separation of duty for appr
 
 - Local snapshots are read only from `$REMNANT_DATA_DIR/snapshots/<key>`; keys match `^[a-z0-9][a-z0-9._-]{0,127}$` and cannot contain `..`. A snapshot root that is a symlink is rejected, and the tree digest never follows symlinks.
 - Remote repositories must be `https://` on a host listed in `REMNANT_REPO_HOSTS`, without credentials, port, query or fragment. An empty allowlist disables them.
+- The fetcher re-checks the allowlist, resolves the host and refuses it if *any* address is private, loopback, link-local or otherwise non-public, then pins git's connection to the checked address (`http.curloptResolve`), so DNS rebinding cannot redirect it inside the network. Git runs with no system or user configuration, no credential helper, no hooks, no submodules, no redirects and only the https transport; refs that could be read as options are rejected. It fetches one ref at depth 1, removes `.git`, refuses trees over 2 GiB and never replaces an existing snapshot directory.
+- A git target's revision is its commit SHA; its tree digest is recorded too, and every run and worker request re-hashes the checkout against it.
 - Repository text, comments and embedded prompts are untrusted data for agents (see `agent-contracts.md`).
 
 ## Worker isolation

@@ -107,7 +107,9 @@ paths:
         `$REMNANT_DATA_DIR/snapshots`; it is pinned immediately to
         `sha256:<tree digest>` and becomes `ready`.
         `git_repository`: `source_uri` must be https on an allowlisted host
-        (`REMNANT_REPO_HOSTS`); the target stays `pending` until a fetcher pins a commit.
+        (`REMNANT_REPO_HOSTS`) and `source_ref` a branch, tag or commit (default HEAD).
+        The target is `pending` until the orchestrator's fetcher checks it out and pins
+        the commit (`ready`), or `unavailable` with `metadata.fetch_error`.
       requestBody:
         required: true
         content:

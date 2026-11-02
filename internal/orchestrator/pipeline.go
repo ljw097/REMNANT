@@ -99,30 +99,25 @@ func stageBefore(a, b research.RunStatus) bool {
 	return ia >= 0 && ib >= 0 && ia < ib
 }
 
+// snapshotDir is where a ready target's tree lives: a local snapshot placed
+// by an operator or a git checkout made by the fetcher.
 func (j *job) snapshotDir(t store.WorkTarget) (string, error) {
-	switch t.Kind {
-	case "local_snapshot", "lab_fixture":
-		if err := source.ValidateSnapshotKey(t.SnapshotKey); err != nil {
-			return "", err
-		}
-		return filepath.Join(j.o.cfg.SnapshotDir(), t.SnapshotKey), nil
+	if err := source.ValidateSnapshotKey(t.SnapshotKey); err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("target %d: %s targets have no local snapshot to read", t.ID, t.Kind)
+	return filepath.Join(j.o.cfg.SnapshotDir(), t.SnapshotKey), nil
 }
 
-// collect re-verifies every pinned revision: the snapshot on disk must still
-// hash to what the run was pinned to.
+// collect re-verifies every target: it must still be pinned to the revision
+// the run was created with, and its tree on disk must still hash to the
+// digest recorded when it was pinned.
 func (j *job) collect(ctx context.Context, scope store.WorkScope) error {
 	for _, t := range scope.Targets {
-		if _, err := j.snapshotDir(t); err != nil {
-			return err
+		if t.CurrentRevision != t.Revision {
+			return fmt.Errorf("target %d was re-pinned since the run was created (run %s, target now %s)", t.ID, t.Revision, t.CurrentRevision)
 		}
-		rev, _, err := source.LocalSnapshot(j.o.cfg.SnapshotDir(), t.SnapshotKey)
-		if err != nil {
+		if _, err := source.VerifySnapshot(j.o.cfg.SnapshotDir(), t.SnapshotKey, t.TreeSHA256); err != nil {
 			return fmt.Errorf("target %d: %w", t.ID, err)
-		}
-		if rev != t.Revision {
-			return fmt.Errorf("target %d changed on disk since the run was pinned (pinned %s, now %s)", t.ID, t.Revision, rev)
 		}
 	}
 	var withSigs int

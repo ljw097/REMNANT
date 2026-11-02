@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/ljw097/remnant/internal/policy"
 )
@@ -105,4 +107,43 @@ func (s *Store) ListTargets(ctx context.Context, projectID int64) ([]Target, err
 
 func (s *Store) GetTarget(ctx context.Context, id int64) (Target, error) {
 	return one[Target](s.pool.Query(ctx, `SELECT `+targetCols+` FROM targets WHERE id = $1`, id))
+}
+
+// ClaimPendingFetch leases the oldest git_repository target waiting to be
+// pinned. It returns ErrNotFound when there is none.
+func (s *Store) ClaimPendingFetch(ctx context.Context, owner string, ttl time.Duration) (Target, error) {
+	return one[Target](s.pool.Query(ctx, `
+		UPDATE targets SET fetch_owner = $1, fetch_expires_at = now() + $2 * interval '1 second'
+		WHERE id = (
+			SELECT id FROM targets
+			WHERE kind = 'git_repository' AND status = 'pending'
+			  AND (fetch_expires_at IS NULL OR fetch_expires_at < now())
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1)
+		RETURNING `+targetCols, owner, ttl.Seconds()))
+}
+
+// CompleteFetch pins a fetched target to its commit and tree digest.
+func (s *Store) CompleteFetch(ctx context.Context, id int64, owner, commit, digest string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE targets SET status = 'ready', revision = $3, tree_sha256 = $4, fetch_owner = '', fetch_expires_at = NULL,
+		       metadata = metadata - 'fetch_error' || jsonb_build_object('fetched_at', now())
+		WHERE id = $1 AND fetch_owner = $2 AND status = 'pending'`, id, owner, commit, digest)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = fmt.Errorf("%w: target %d is no longer leased by this fetcher", ErrConflict, id)
+	}
+	return err
+}
+
+// FailFetch marks a target unavailable with the reason.
+func (s *Store) FailFetch(ctx context.Context, id int64, owner, reason string) error {
+	if len(reason) > 1000 {
+		reason = reason[:1000]
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE targets SET status = 'unavailable', fetch_owner = '', fetch_expires_at = NULL,
+		       metadata = metadata || jsonb_build_object('fetch_error', $3::text)
+		WHERE id = $1 AND fetch_owner = $2 AND status = 'pending'`, id, owner, reason)
+	return err
 }

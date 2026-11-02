@@ -134,3 +134,27 @@ func LocalSnapshot(snapshotDir, key string) (revision, digest string, err error)
 	}
 	return "sha256:" + digest, digest, nil
 }
+
+// VerifySnapshot checks that snapshotDir/key is a real directory whose tree
+// digest is wantDigest, and returns its path.
+func VerifySnapshot(snapshotDir, key, wantDigest string) (string, error) {
+	if err := ValidateSnapshotKey(key); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(snapshotDir, key)
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("snapshot %q: %w", key, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("snapshot %q is not a directory", key)
+	}
+	digest, err := TreeDigest(dir)
+	if err != nil {
+		return "", err
+	}
+	if wantDigest == "" || digest != wantDigest {
+		return "", fmt.Errorf("snapshot %q changed on disk since it was pinned", key)
+	}
+	return dir, nil
+}

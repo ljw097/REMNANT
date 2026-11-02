@@ -329,11 +329,16 @@ func (s *Store) AddTokenUsage(ctx context.Context, runID, input, output int64) e
 }
 
 // WorkTarget is a run target with the revision pinned for that run.
+// CurrentRevision and TreeSHA256 describe the target now; a run may only
+// read the snapshot while CurrentRevision equals the pinned Revision and
+// the snapshot on disk still hashes to TreeSHA256.
 type WorkTarget struct {
 	ID              int64  `db:"id"`
 	Kind            string `db:"kind"`
 	SnapshotKey     string `db:"snapshot_key"`
 	Revision        string `db:"revision"`
+	CurrentRevision string `db:"current_revision"`
+	TreeSHA256      string `db:"tree_sha256"`
 	PrimaryLanguage string `db:"primary_language"`
 }
 
@@ -354,7 +359,7 @@ func (s *Store) WorkScope(ctx context.Context, runID int64) (WorkScope, error) {
 		return WorkScope{}, err
 	}
 	if w.Targets, err = collect[WorkTarget](s.pool.Query(ctx, `
-		SELECT t.id, t.kind, t.snapshot_key, rt.revision, t.primary_language
+		SELECT t.id, t.kind, t.snapshot_key, rt.revision, t.revision AS current_revision, t.tree_sha256, t.primary_language
 		FROM run_targets rt JOIN targets t ON t.id = rt.target_id
 		WHERE rt.run_id = $1 ORDER BY t.id`, runID)); err != nil {
 		return WorkScope{}, err

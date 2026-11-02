@@ -53,7 +53,7 @@ Separation of duty is enforced in the database, not only the API:
 
 ## Revisions and scope hashes
 
-A target's `revision` is a Git commit SHA or `sha256:<tree digest>` for a local snapshot. The digest covers every regular file's relative path, executable bit and content, plus symlink text (symlinks are never followed); `.git/` is excluded.
+A target's `revision` is a Git commit SHA or `sha256:<tree digest>` for a local snapshot; `tree_sha256` holds the tree digest either way. A run may read a target only while the target's revision still equals the one pinned for the run and the tree on disk still hashes to `tree_sha256`. Pending `git_repository` targets are pinned by the orchestrator's fetcher (`internal/fetch`) in the background; a failed fetch marks the target `unavailable` with `metadata.fetch_error`. The digest covers every regular file's relative path, executable bit and content, plus symlink text (symlinks are never followed); `.git/` is excluded.
 
 When a run is created, remnantd pins each target's current revision in `run_targets` and stores
 

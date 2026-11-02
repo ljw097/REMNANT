@@ -23,6 +23,7 @@ import (
 	"github.com/ljw097/remnant/internal/api"
 	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/config"
+	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/orchestrator"
 	"github.com/ljw097/remnant/internal/sandbox"
 	"github.com/ljw097/remnant/internal/secrets"
@@ -103,6 +104,9 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 	orchDone := make(chan struct{})
 	if cfg.Orchestrator {
 		opts := orchestrator.Options{Concurrency: cfg.OrchestratorConcurrency, StaticOperations: []string{}}
+		if len(cfg.RepoHosts) > 0 {
+			opts.Fetcher = &fetch.Fetcher{SnapshotDir: cfg.SnapshotDir(), AllowedHosts: cfg.RepoHosts}
+		}
 		if cfg.Worker == "bwrap" {
 			sup, ops, err := startWorker(ctx, log, st, cfg)
 			if err != nil {

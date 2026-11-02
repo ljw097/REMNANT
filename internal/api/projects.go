@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/source"
 	"github.com/ljw097/remnant/internal/store"
@@ -192,6 +193,10 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		SnapshotKey: in.SnapshotKey, PrimaryLanguage: in.PrimaryLanguage, Status: "pending",
 	}
 	if in.Kind == "git_repository" {
+		if err := fetch.ValidateRef(in.SourceRef); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
 		uri, err := source.CanonicalRepoURL(in.SourceURI, s.cfg.RepoHosts)
 		if err != nil {
 			writeError(w, http.StatusForbidden, "source_policy", err.Error())

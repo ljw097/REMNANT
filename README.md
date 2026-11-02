@@ -22,7 +22,7 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Anthropic model client (structured JSON output) | implemented |
 | Run orchestrator: indexing, pattern matching, Researcher/Skeptic agents, lab dispatch, reports | implemented |
 | Pause/resume and recovery after shutdown or crash, without repeating recorded work | implemented |
-| Git fetcher (pins `git_repository` targets) | **not yet**: they stay `pending` |
+| Git fetcher: pins `git_repository` targets to a commit (allowlisted https hosts, public addresses only) | implemented |
 | Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
 
@@ -67,7 +67,7 @@ Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`PO
 | `REMNANT_MASTER_KEY` | — (required) | base64 of 32 random bytes; encrypts model API keys |
 | `REMNANT_LISTEN` | `127.0.0.1:8080` | HTTP listen address |
 | `REMNANT_DATA_DIR` | `./data` | snapshots live in `<dir>/snapshots/<key>` |
-| `REMNANT_REPO_HOSTS` | empty | comma-separated https hosts allowed for `git_repository` targets; empty disables them |
+| `REMNANT_REPO_HOSTS` | empty | comma-separated https hosts allowed for `git_repository` targets; empty disables them. The orchestrator fetches pending targets from these hosts |
 | `REMNANT_ORCHESTRATOR` | `on` | `off` serves the API without working runs (e.g. for a separate worker instance later) |
 | `REMNANT_ORCHESTRATOR_CONCURRENCY` | `2` | runs worked on at once per instance (1–16) |
 | `REMNANT_WORKER` | `off` | `bwrap` enables the sandboxed worker runtime |
@@ -92,6 +92,7 @@ internal/workerexec/   worker operations: index, built-in rules, semgrep, lab ha
 internal/sandbox/      supervisor: bwrap + systemd scope, artifact verification
 internal/sourceindex/  heuristic source chunker shared by orchestrator and worker
 internal/artifact/     content-addressed artifact storage
+internal/fetch/        git fetcher for git_repository targets
 internal/llm/          model client (Anthropic SDK, schema-constrained JSON)
 internal/orchestrator/ run pipeline: leases, indexing, agents, lab dispatch, reports
 internal/store/        PostgreSQL access; migrations/ is embedded

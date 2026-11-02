@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -213,8 +212,8 @@ func (j *job) runWorker(ctx context.Context, targetID int64, revision, op string
 }
 
 // SnapshotResolver maps worker mount IDs ("target_<id>") to the target's
-// snapshot directory, refusing if the snapshot no longer hashes to the
-// requested revision.
+// snapshot directory, refusing unless the target is still pinned to the
+// requested revision and its tree still hashes to the recorded digest.
 func SnapshotResolver(st *store.Store, cfg config.Config) func(context.Context, string, string) (string, error) {
 	return func(ctx context.Context, mountID, revision string) (string, error) {
 		raw, ok := strings.CutPrefix(mountID, "target_")
@@ -226,16 +225,9 @@ func SnapshotResolver(st *store.Store, cfg config.Config) func(context.Context, 
 		if err != nil {
 			return "", fmt.Errorf("target %d: %w", id, err)
 		}
-		if t.Kind != "local_snapshot" && t.Kind != "lab_fixture" {
-			return "", fmt.Errorf("target %d has no local snapshot", id)
+		if t.Status != "ready" || t.Revision != revision {
+			return "", fmt.Errorf("target %d is not pinned to the requested revision", id)
 		}
-		rev, _, err := source.LocalSnapshot(cfg.SnapshotDir(), t.SnapshotKey)
-		if err != nil {
-			return "", err
-		}
-		if rev != revision {
-			return "", fmt.Errorf("target %d changed since it was pinned", id)
-		}
-		return filepath.Join(cfg.SnapshotDir(), t.SnapshotKey), nil
+		return source.VerifySnapshot(cfg.SnapshotDir(), t.SnapshotKey, t.TreeSHA256)
 	}
 }
