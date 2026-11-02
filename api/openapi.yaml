@@ -22,6 +22,31 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Principal' }
 
+  /system/version:
+    get:
+      summary: Running version and updater state
+      responses:
+        '200':
+          description: Version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string, examples: [v0.2.0, dev] }
+                  commit: { type: string }
+                  update: { $ref: '#/components/schemas/UpdateState' }
+  /system/update:
+    post:
+      summary: Install the latest signed release now and restart (admin)
+      description: |
+        Checks the release source; if a newer release exists, downloads it, verifies the
+        Ed25519 signature and checksums, swaps the binaries and restarts remnantd in place.
+        Runs in progress are requeued by the shutdown and resume after the restart.
+      responses:
+        '202': { description: Installing; poll /system/version }
+        '409': { description: Already up to date, or updates disabled (dev build or REMNANT_AUTO_UPDATE=off), $ref: '#/components/responses/Error' }
+        '502': { description: The release source could not be read or did not verify, $ref: '#/components/responses/Error' }
   /llm-profiles:
     get:
       summary: List model profiles (never includes key material)
@@ -364,7 +389,7 @@ components:
             type: object
             properties:
               error: { type: string }
-              code: { type: string, enum: [bad_request, unauthorized, forbidden, not_found, conflict, invalid, source_policy, snapshot_unavailable, internal] }
+              code: { type: string, enum: [bad_request, unauthorized, forbidden, not_found, conflict, invalid, source_policy, snapshot_unavailable, update_source, internal] }
   schemas:
     Principal:
       type: object
@@ -372,6 +397,17 @@ components:
         user_id: { type: integer, format: int64 }
         username: { type: string }
         role: { type: string, enum: [admin, researcher, reviewer] }
+    UpdateState:
+      type: object
+      properties:
+        current: { type: string }
+        mode: { type: string, enum: [off, check, install] }
+        latest: { type: string }
+        release_url: { type: string }
+        available: { type: boolean }
+        status: { type: string, enum: [idle, checking, installing, restarting, disabled] }
+        last_checked: { type: string, format: date-time }
+        last_error: { type: string }
     LLMProfile:
       type: object
       properties:

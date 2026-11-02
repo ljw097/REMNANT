@@ -23,6 +23,7 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Run orchestrator: indexing, pattern matching, Researcher/Skeptic agents, lab dispatch, reports | implemented |
 | Pause/resume and recovery after shutdown or crash, without repeating recorded work | implemented |
 | Git fetcher: pins `git_repository` targets to a commit (allowlisted https hosts, public addresses only) | implemented |
+| Signed releases (GitHub Actions) and self-update with rollback | implemented |
 | Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
 
@@ -75,12 +76,17 @@ Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`PO
 | `REMNANT_WORKER_RULES` | empty | directory of semgrep rule packs (`<dir>/<pack>`), mounted read-only |
 | `REMNANT_WORKER_ALLOW_NO_CGROUP` | unset | `1` runs without a systemd user scope; memory, task and CPU limits are then **not** enforced |
 | `REMNANT_STATIC_OPERATIONS` | `static.patterns,static.semgrep` | analyzers run in `static_validation`; ones the worker cannot run are skipped |
+| `REMNANT_AUTO_UPDATE` | `check` | `off`, `check` (report new releases; install on request) or `install` (install and restart automatically) |
+| `REMNANT_UPDATE_INTERVAL` | `6h` | how often to check (at least `10m`) |
+| `REMNANT_UPDATE_REPO` | `ljw097/REMNANT` | GitHub repository releases come from |
+| `REMNANT_UPDATE_API` | `https://api.github.com` | GitHub API base (for mirrors) |
 
 ## Layout
 
 ```text
 cmd/remnantd/          server entry point and admin subcommands
 cmd/remnant-worker/    worker program that runs inside the sandbox
+cmd/remnant-release/   release signing: keygen, sign, verify
 internal/config/       environment configuration
 internal/auth/         roles, bearer tokens, middleware
 internal/secrets/      AES-256-GCM sealing of stored credentials
@@ -93,6 +99,8 @@ internal/sandbox/      supervisor: bwrap + systemd scope, artifact verification
 internal/sourceindex/  heuristic source chunker shared by orchestrator and worker
 internal/artifact/     content-addressed artifact storage
 internal/fetch/        git fetcher for git_repository targets
+internal/update/       signed release lookup, verification, install, rollback
+internal/buildinfo/    version stamped into release builds
 internal/llm/          model client (Anthropic SDK, schema-constrained JSON)
 internal/orchestrator/ run pipeline: leases, indexing, agents, lab dispatch, reports
 internal/store/        PostgreSQL access; migrations/ is embedded
@@ -101,6 +109,9 @@ api/openapi.yaml       API contract
 docs/                  architecture, agent contracts, worker protocol, security, UI
 scripts/smoke.sh       end-to-end test against a disposable database
 scripts/fake_anthropic.py  local model-API stand-in used by smoke.sh
+scripts/release-build.sh   reproducible release archives and SHA256SUMS
+scripts/update-e2e.sh      self-update test with real binaries
+.github/workflows/         ci (tests, smoke, update e2e, signed dry-run) and release
 ```
 
 ## Dependencies
@@ -118,9 +129,33 @@ Everything else (HTTP routing, auth, crypto, SSE, migrations) uses the Go standa
 go test ./...                                                             # unit tests, no database needed
 REMNANT_TEST_DATABASE_URL=postgres://.../scratch go test ./internal/orchestrator/  # pipeline against PostgreSQL
 REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/smoke.sh                # binary + API + orchestrator + worker
+REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/update-e2e.sh           # self-update, rollback, tampering
 ```
 
 Both database-backed suites DROP the `remnant` schema in the database they are given. Neither needs network access or a real model key.
+
+## Releases and updates
+
+**Cutting a release.** Push a `vX.Y.Z` tag that points at a commit on `main`. The `release` workflow tests, builds static linux/amd64 and linux/arm64 archives reproducibly (`scripts/release-build.sh`), writes `SHA256SUMS`, signs it with the Ed25519 key held only in the `REMNANT_RELEASE_SIGNING_KEY` secret, verifies the signature against the key compiled into `remnantd`, and publishes the GitHub release. Every pull request runs the same build and signing as a dry run.
+
+**Installing a release by hand.**
+
+```sh
+curl -LO https://github.com/ljw097/REMNANT/releases/download/vX.Y.Z/{remnant_vX.Y.Z_linux_amd64.tar.gz,SHA256SUMS,SHA256SUMS.sig}
+go run ./cmd/remnant-release verify SHA256SUMS   # from a checkout; or compare with the public key in internal/update/keys.go
+sha256sum -c --ignore-missing SHA256SUMS
+tar xzf remnant_vX.Y.Z_linux_amd64.tar.gz
+```
+
+**Self-update.** Release builds check `REMNANT_UPDATE_REPO` every `REMNANT_UPDATE_INTERVAL` (development builds never do). `GET /api/v1/system/version` reports the running and latest versions; `POST /api/v1/system/update` (admin) or `remnantd update` installs now; `REMNANT_AUTO_UPDATE=install` does it automatically. An update:
+
+1. accepts only releases whose `SHA256SUMS` verifies against a key compiled into the running binary, takes the version from the signed archive name and never installs an older or equal version;
+2. checks the archive against the signed checksum, extracts only `remnantd` and `remnant-worker`, and runs each with `version` to confirm it;
+3. swaps both binaries atomically next to the installed ones, keeping `<name>.old`;
+4. shuts down gracefully (runs in progress are requeued and resume) and re-executes itself with the same PID, arguments and environment;
+5. is confirmed after the new version has served for a minute. If it fails to start three times (under a supervisor such as systemd with `Restart=always`), the previous binaries are restored and started.
+
+The directory holding the binaries must be writable by the service user for self-update; otherwise use `check` mode and install releases through your own deployment.
 
 ## Documents
 

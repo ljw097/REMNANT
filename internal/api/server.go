@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,21 +12,28 @@ import (
 	"strings"
 
 	"github.com/ljw097/remnant/internal/auth"
+	"github.com/ljw097/remnant/internal/buildinfo"
 	"github.com/ljw097/remnant/internal/config"
 	"github.com/ljw097/remnant/internal/store"
+	"github.com/ljw097/remnant/internal/update"
 )
 
 type Server struct {
-	store *store.Store
-	cfg   config.Config
-	log   *slog.Logger
+	store   *store.Store
+	cfg     config.Config
+	log     *slog.Logger
+	updates *update.Manager
 }
 
-func New(st *store.Store, cfg config.Config, log *slog.Logger) http.Handler {
-	s := &Server{store: st, cfg: cfg, log: log}
+// New builds the HTTP handler. updates may be nil (no update endpoints
+// beyond the version).
+func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.Manager) http.Handler {
+	s := &Server{store: st, cfg: cfg, log: log, updates: updates}
 
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/me", s.me)
+	api.HandleFunc("GET /api/v1/system/version", s.version)
+	api.HandleFunc("POST /api/v1/system/update", s.requireRole(s.applyUpdate, auth.RoleAdmin))
 
 	api.HandleFunc("GET /api/v1/llm-profiles", s.listLLMProfiles)
 	api.HandleFunc("POST /api/v1/llm-profiles", s.requireRole(s.createLLMProfile, auth.RoleAdmin))
@@ -199,4 +207,40 @@ func dedupe(ids []int64) []int64 {
 		}
 	}
 	return out
+}
+
+func (s *Server) version(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{"version": buildinfo.Version, "commit": buildinfo.Commit}
+	if s.updates != nil {
+		out["update"] = s.updates.State()
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// applyUpdate checks for a newer release and, if there is one, installs it
+// in the background and restarts remnantd. Runs in progress are requeued by
+// the shutdown and resume afterwards.
+func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusConflict, "conflict", update.ErrDisabled.Error())
+		return
+	}
+	rel, err := s.updates.Check(r.Context())
+	switch {
+	case errors.Is(err, update.ErrDisabled):
+		writeError(w, http.StatusConflict, "conflict", "updates are disabled (development build or REMNANT_AUTO_UPDATE=off)")
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, "update_source", err.Error())
+		return
+	case !s.updates.State().Available:
+		writeError(w, http.StatusConflict, "conflict", "already running the latest release "+buildinfo.Version)
+		return
+	}
+	go func() {
+		if err := s.updates.Apply(context.WithoutCancel(r.Context())); err != nil && !errors.Is(err, update.ErrUpToDate) {
+			s.log.Error("update failed", "err", err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]string{"installing": rel.Version.String(), "status": "installing"})
 }

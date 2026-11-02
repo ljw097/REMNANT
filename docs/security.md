@@ -31,6 +31,14 @@ Roles are checked per route (see `architecture.md`). Separation of duty for appr
 
 Implemented by `internal/sandbox` (bwrap inside a systemd user cgroup scope); see `worker-protocol.md`. In short: read-only source mount, write-only output directory, no network at the namespace level, non-root, dropped capabilities, seccomp/AppArmor, PID/CPU/memory/time limits, no container-runtime socket, no host home directories, SSH agents, cloud credentials, browser profiles, or REMNANT configuration and secrets. Everything a worker returns is validated before it is stored.
 
+## Releases and self-update
+
+- Release archives are listed in `SHA256SUMS`, signed with Ed25519 over `"remnant-release-v1\n" || SHA256SUMS`. The private key exists only as the `REMNANT_RELEASE_SIGNING_KEY` Actions secret; the public key is compiled into `remnantd` (`internal/update/keys.go`).
+- The updater trusts nothing that is not covered by that signature: the version comes from the signed archive name (not the release tag), so a compromised release host can neither substitute binaries nor roll an installation back. Downloads are size-capped, https-only (redirects included), and only the two expected regular files are extracted.
+- Before swapping, each new binary must run and report the signed version. The previous binaries are kept as `.old`; a version that fails to start three times is rolled back automatically.
+- Key rotation: generate a new key (`remnant-release keygen`), release a version whose `keys.go` lists both public keys, signed with the old key; then switch the secret to the new key. Installations that skipped that release must be updated by hand once.
+- If the signing secret leaks, remove it, rotate as above, and treat releases signed after the leak as untrusted.
+
 ## Deployment hardening
 
 - remnantd listens on `127.0.0.1:8080` by default. Put a TLS-terminating reverse proxy in front before exposing it beyond the host.

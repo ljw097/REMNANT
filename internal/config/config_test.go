@@ -15,7 +15,8 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ListenAddr != "127.0.0.1:8080" || !c.Orchestrator || c.Worker != "off" || len(c.StaticOperations) != 2 || len(c.RepoHosts) != 0 {
+	if c.ListenAddr != "127.0.0.1:8080" || !c.Orchestrator || c.Worker != "off" || len(c.StaticOperations) != 2 || len(c.RepoHosts) != 0 ||
+		c.AutoUpdate != "check" || c.UpdateInterval.Hours() != 6 || c.UpdateRepo != "ljw097/REMNANT" {
 		t.Fatalf("defaults = %+v", c)
 	}
 }
@@ -29,6 +30,8 @@ func TestRejects(t *testing.T) {
 		"unknown op":       {"REMNANT_STATIC_OPERATIONS": "static.magic"},
 		"bad concurrency":  {"REMNANT_ORCHESTRATOR_CONCURRENCY": "0"},
 		"bad orchestrator": {"REMNANT_ORCHESTRATOR": "maybe"},
+		"bad update mode":  {"REMNANT_AUTO_UPDATE": "always"},
+		"short interval":   {"REMNANT_UPDATE_INTERVAL": "1m"},
 	} {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: accepted", name)

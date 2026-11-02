@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ljw097/remnant/internal/worker"
 )
@@ -30,7 +31,15 @@ type Config struct {
 	WorkerRules         string   // REMNANT_WORKER_RULES, semgrep rule pack directory (optional)
 	WorkerAllowNoCgroup bool     // REMNANT_WORKER_ALLOW_NO_CGROUP=1 accepts running without cgroup limits
 	StaticOperations    []string // REMNANT_STATIC_OPERATIONS, default static.patterns,static.semgrep
+
+	AutoUpdate     string        // REMNANT_AUTO_UPDATE: off | check (default) | install
+	UpdateInterval time.Duration // REMNANT_UPDATE_INTERVAL, default 6h, at least 10m
+	UpdateRepo     string        // REMNANT_UPDATE_REPO, default ljw097/REMNANT
+	UpdateAPI      string        // REMNANT_UPDATE_API, default https://api.github.com
 }
+
+// UpdateStageDir holds a downloaded release while it is verified.
+func (c Config) UpdateStageDir() string { return filepath.Join(c.DataDir, "update-stage") }
 
 // WorkDir holds per-request worker output while a request runs.
 func (c Config) WorkDir() string { return filepath.Join(c.DataDir, "work") }
@@ -107,6 +116,28 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("REMNANT_STATIC_OPERATIONS: %q is not a static operation", op)
 		}
 		cfg.StaticOperations = append(cfg.StaticOperations, op)
+	}
+
+	switch cfg.AutoUpdate = getenv("REMNANT_AUTO_UPDATE"); cfg.AutoUpdate {
+	case "":
+		cfg.AutoUpdate = "check"
+	case "off", "check", "install":
+	default:
+		return Config{}, fmt.Errorf("REMNANT_AUTO_UPDATE must be off, check or install, got %q", cfg.AutoUpdate)
+	}
+	cfg.UpdateInterval = 6 * time.Hour
+	if v := getenv("REMNANT_UPDATE_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 10*time.Minute {
+			return Config{}, fmt.Errorf("REMNANT_UPDATE_INTERVAL must be a duration of at least 10m, got %q", v)
+		}
+		cfg.UpdateInterval = d
+	}
+	if cfg.UpdateRepo = getenv("REMNANT_UPDATE_REPO"); cfg.UpdateRepo == "" {
+		cfg.UpdateRepo = "ljw097/REMNANT"
+	}
+	if cfg.UpdateAPI = getenv("REMNANT_UPDATE_API"); cfg.UpdateAPI == "" {
+		cfg.UpdateAPI = "https://api.github.com"
 	}
 
 	for _, h := range strings.Split(getenv("REMNANT_REPO_HOSTS"), ",") {

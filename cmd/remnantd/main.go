@@ -4,6 +4,8 @@
 //	remnantd migrate                                 apply pending migrations and exit
 //	remnantd create-user  -username NAME -role ROLE  create a user and print a first token
 //	remnantd create-token -username NAME [-name N] [-ttl 720h]
+//	remnantd update [-check]                         install the latest signed release (or only report it)
+//	remnantd version                                 print the version
 package main
 
 import (
@@ -17,11 +19,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/ljw097/remnant/internal/api"
 	"github.com/ljw097/remnant/internal/auth"
+	"github.com/ljw097/remnant/internal/buildinfo"
 	"github.com/ljw097/remnant/internal/config"
 	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/orchestrator"
@@ -39,17 +43,34 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, log, cmd, args); err != nil {
+	if cmd == "version" {
+		fmt.Println(buildinfo.Version, buildinfo.Commit)
+		return
+	}
+	paths, err := installedPaths()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "remnantd:", err)
+		os.Exit(1)
+	}
+	if cmd == "serve" {
+		guardUpdate(log, paths)
+	}
+	err = run(ctx, log, cmd, args, paths)
+	stop()
+	if errors.Is(err, errRestart) {
+		restart(log, paths)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "remnantd:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger, cmd string, args []string) error {
+func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths map[string]string) error {
 	switch cmd {
-	case "serve", "migrate", "create-user", "create-token":
+	case "serve", "migrate", "create-user", "create-token", "update":
 	case "-h", "--help", "help":
-		fmt.Println("usage: remnantd [serve|migrate|create-user|create-token] [flags]")
+		fmt.Println("usage: remnantd [serve|migrate|create-user|create-token|update|version] [flags]")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
@@ -58,6 +79,9 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string) error
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return err
+	}
+	if cmd == "update" {
+		return updateCommand(ctx, log, cfg, paths, args)
 	}
 	sealer, err := secrets.NewSealer(cfg.MasterKey)
 	if err != nil {
@@ -85,13 +109,22 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string) error
 	case "create-token":
 		return createToken(ctx, st, args)
 	}
-	return serve(ctx, log, st, cfg)
+	return serve(ctx, log, st, cfg, paths)
 }
 
-func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config) error {
+func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config, paths map[string]string) error {
+	// An installed update stops the server gracefully and asks main to
+	// re-execute the new binary.
+	ctx, stopServing := context.WithCancel(ctx)
+	defer stopServing()
+	var restartRequested atomic.Bool
+	upd := newUpdateManager(log, cfg, paths, func() { restartRequested.Store(true); stopServing() })
+	go upd.Run(ctx)
+	go confirmUpdate(ctx, log, upd.Installer)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           api.New(st, cfg, log),
+		Handler:           api.New(st, cfg, log, upd),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -140,6 +173,9 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 		serveErr = err
 	}
 	<-orchDone
+	if serveErr == nil && restartRequested.Load() {
+		return errRestart
+	}
 	return serveErr
 }
 

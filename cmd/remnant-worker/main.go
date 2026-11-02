@@ -2,6 +2,7 @@
 //
 //	remnant-worker run            read one request line on stdin, answer on stdout
 //	remnant-worker capabilities   print the operations this environment supports
+//	remnant-worker version        print the version
 //
 // It is not meant to be run directly on a host: it trusts that its
 // filesystem view, network and resource limits were set up by the sandbox.
@@ -17,6 +18,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ljw097/remnant/internal/buildinfo"
 	"github.com/ljw097/remnant/internal/worker"
 	"github.com/ljw097/remnant/internal/workerexec"
 )
@@ -27,6 +29,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "version":
+		fmt.Println(buildinfo.Version, buildinfo.Commit)
 	case "capabilities":
 		_ = json.NewEncoder(os.Stdout).Encode(workerexec.Capabilities())
 	case "run":
