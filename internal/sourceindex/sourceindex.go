@@ -1,4 +1,6 @@
-package orchestrator
+// Package sourceindex reads source snapshots as text and splits files into
+// symbol regions. Nothing from the snapshot is executed.
+package sourceindex
 
 import (
 	"bytes"
@@ -11,16 +13,14 @@ import (
 	"strings"
 )
 
-// The indexer only reads text; nothing from the target is executed. It is a
-// heuristic, language-aware chunker, not a parser: it finds where functions
-// start and treats the lines up to the next start as that symbol's region.
-// Precise parsing belongs to worker operations (index.symbols,
-// static.tree_sitter).
+// The chunker is heuristic and language-aware, not a parser: it finds where
+// functions start and treats the lines up to the next start as that symbol's
+// region.
 
 const (
-	maxFileBytes  = 1 << 20
-	maxFiles      = 20000
-	maxChunkLines = 200
+	MaxFileBytes  = 1 << 20
+	MaxFiles      = 20000
+	MaxChunkLines = 200
 	windowLines   = 120
 )
 
@@ -34,7 +34,7 @@ var extLanguage = map[string]string{
 	".php": "php", ".rb": "ruby",
 }
 
-func languageOf(path string) string { return extLanguage[strings.ToLower(filepath.Ext(path))] }
+func LanguageOf(path string) string { return extLanguage[strings.ToLower(filepath.Ext(path))] }
 
 var (
 	goFunc   = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)`)
@@ -50,8 +50,8 @@ var (
 	}
 )
 
-// symbolAt returns the symbol defined on line, if the line starts one.
-func symbolAt(lang, line string) (string, bool) {
+// SymbolAt returns the symbol defined on line, if the line starts one.
+func SymbolAt(lang, line string) (string, bool) {
 	var m []string
 	switch lang {
 	case "go":
@@ -85,8 +85,8 @@ func symbolAt(lang, line string) (string, bool) {
 	return m[1], true
 }
 
-// chunk is a 1-based inclusive line range of a file.
-type chunk struct {
+// Chunk is a 1-based inclusive line range of a file.
+type Chunk struct {
 	Path     string `json:"path"`
 	Language string `json:"language"`
 	Symbol   string `json:"symbol"`
@@ -94,23 +94,23 @@ type chunk struct {
 	End      int    `json:"line_end"`
 }
 
-// chunkFile splits lines into symbol regions of at most maxChunkLines. A file
+// ChunkFile splits lines into symbol regions of at most MaxChunkLines. A file
 // with no recognised symbol is split into fixed windows with no symbol name.
-func chunkFile(path, lang string, lines []string) []chunk {
+func ChunkFile(path, lang string, lines []string) []Chunk {
 	type start struct {
 		line int
 		name string
 	}
 	var starts []start
 	for i, l := range lines {
-		if name, ok := symbolAt(lang, l); ok {
+		if name, ok := SymbolAt(lang, l); ok {
 			starts = append(starts, start{i + 1, name})
 		}
 	}
-	var out []chunk
+	var out []Chunk
 	if len(starts) == 0 {
 		for s := 1; s <= len(lines); s += windowLines {
-			out = append(out, chunk{path, lang, "", s, min(s+windowLines-1, len(lines))})
+			out = append(out, Chunk{path, lang, "", s, min(s+windowLines-1, len(lines))})
 		}
 		return out
 	}
@@ -119,24 +119,24 @@ func chunkFile(path, lang string, lines []string) []chunk {
 		if i+1 < len(starts) {
 			end = starts[i+1].line - 1
 		}
-		end = min(end, st.line+maxChunkLines-1)
-		out = append(out, chunk{path, lang, st.name, st.line, end})
+		end = min(end, st.line+MaxChunkLines-1)
+		out = append(out, Chunk{path, lang, st.name, st.line, end})
 	}
 	return out
 }
 
-type sourceFile struct {
+type File struct {
 	Path     string // slash-separated, relative to the snapshot root
 	Language string
 	Lines    []string
 	SHA256   string
 }
 
-// walkSource calls fn for every indexable file under root in lexical order:
+// Walk calls fn for every indexable file under root in lexical order:
 // regular files only (symlinks are never followed), known languages, at most
-// maxFileBytes, no NUL bytes, .git excluded. It stops after maxFiles and
+// MaxFileBytes, no NUL bytes, .git excluded. It stops after MaxFiles and
 // reports truncation.
-func walkSource(root string, fn func(sourceFile) error) (truncated bool, err error) {
+func Walk(root string, fn func(File) error) (truncated bool, err error) {
 	n := 0
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -148,15 +148,15 @@ func walkSource(root string, fn func(sourceFile) error) (truncated bool, err err
 			}
 			return nil
 		}
-		lang := languageOf(p)
+		lang := LanguageOf(p)
 		if !d.Type().IsRegular() || lang == "" {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || info.Size() > maxFileBytes {
+		if err != nil || info.Size() > MaxFileBytes {
 			return err
 		}
-		if n == maxFiles {
+		if n == MaxFiles {
 			truncated = true
 			return fs.SkipAll
 		}
@@ -174,7 +174,7 @@ func walkSource(root string, fn func(sourceFile) error) (truncated bool, err err
 		n++
 		sum := sha256.Sum256(data)
 		text := strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-		return fn(sourceFile{Path: filepath.ToSlash(rel), Language: lang, Lines: strings.Split(text, "\n"), SHA256: hex.EncodeToString(sum[:])})
+		return fn(File{Path: filepath.ToSlash(rel), Language: lang, Lines: strings.Split(text, "\n"), SHA256: hex.EncodeToString(sum[:])})
 	})
 	return truncated, err
 }

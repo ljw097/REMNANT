@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ljw097/remnant/internal/sourceindex"
 	"github.com/ljw097/remnant/internal/store"
 )
 
@@ -42,7 +43,7 @@ func compileSignatures(list []string) []signature {
 	return out
 }
 
-// score rates a chunk against a pattern: +3 per matched signature, −2 per
+// score rates a sourceindex.Chunk against a pattern: +3 per matched signature, −2 per
 // matched counter-signature. Only chunks with a signature hit and a positive
 // score qualify.
 func score(text string, sigs, counters []signature) (int, []string, []string, bool) {
@@ -68,12 +69,12 @@ type candidate struct {
 	TargetID  int64
 	Revision  string
 	Pattern   store.Pattern
-	Chunk     chunk
+	Chunk     sourceindex.Chunk
 	Score     int
 	Matched   []string
 	Countered []string
 	Excerpt   string // line-numbered
-	SHA256    string // of the raw chunk text
+	SHA256    string // of the raw sourceindex.Chunk text
 
 	evidenceID int64 // set once recorded as run-level evidence
 }

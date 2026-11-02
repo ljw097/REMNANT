@@ -102,3 +102,7 @@ func (s *Store) ListTargets(ctx context.Context, projectID int64) ([]Target, err
 	return collect[Target](s.pool.Query(ctx, `
 		SELECT `+targetCols+` FROM targets WHERE project_id = $1 ORDER BY created_at DESC`, projectID))
 }
+
+func (s *Store) GetTarget(ctx context.Context, id int64) (Target, error) {
+	return one[Target](s.pool.Query(ctx, `SELECT `+targetCols+` FROM targets WHERE id = $1`, id))
+}

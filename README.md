@@ -22,15 +22,16 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Anthropic model client (structured JSON output) | implemented |
 | Run orchestrator: indexing, pattern matching, Researcher/Skeptic agents, lab dispatch, reports | implemented |
 | Git fetcher (pins `git_repository` targets) | **not yet**: they stay `pending` |
-| Sandboxed worker runtime | **not yet**: protocol only, so static analysis is skipped and approved lab experiments are recorded as not run |
+| Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
 
 ## Quick start
 
-Requirements: Go ≥ 1.25 and PostgreSQL ≥ 14.
+Requirements: Go ≥ 1.25 and PostgreSQL ≥ 14. The worker runtime additionally needs Linux with unprivileged user namespaces, bubblewrap (`bwrap`), and a systemd user session for cgroup limits; lab harnesses use the host's `/usr` toolchain (e.g. `cc` with sanitizers).
 
 ```sh
 go build -o remnantd ./cmd/remnantd
+go build -o remnant-worker ./cmd/remnant-worker   # needed for REMNANT_WORKER=bwrap
 
 export REMNANT_DATABASE_URL='postgres://remnant@localhost/remnant'
 export REMNANT_MASTER_KEY="$(head -c32 /dev/urandom | base64)"   # keep this safe: it decrypts model keys
@@ -68,11 +69,17 @@ Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`PO
 | `REMNANT_REPO_HOSTS` | empty | comma-separated https hosts allowed for `git_repository` targets; empty disables them |
 | `REMNANT_ORCHESTRATOR` | `on` | `off` serves the API without working runs (e.g. for a separate worker instance later) |
 | `REMNANT_ORCHESTRATOR_CONCURRENCY` | `2` | runs worked on at once per instance (1–16) |
+| `REMNANT_WORKER` | `off` | `bwrap` enables the sandboxed worker runtime |
+| `REMNANT_WORKER_BIN` | `remnant-worker` next to `remnantd` | worker executable mounted into the sandbox |
+| `REMNANT_WORKER_RULES` | empty | directory of semgrep rule packs (`<dir>/<pack>`), mounted read-only |
+| `REMNANT_WORKER_ALLOW_NO_CGROUP` | unset | `1` runs without a systemd user scope; memory, task and CPU limits are then **not** enforced |
+| `REMNANT_STATIC_OPERATIONS` | `static.patterns,static.semgrep` | analyzers run in `static_validation`; ones the worker cannot run are skipped |
 
 ## Layout
 
 ```text
 cmd/remnantd/          server entry point and admin subcommands
+cmd/remnant-worker/    worker program that runs inside the sandbox
 internal/config/       environment configuration
 internal/auth/         roles, bearer tokens, middleware
 internal/secrets/      AES-256-GCM sealing of stored credentials
@@ -80,6 +87,10 @@ internal/policy/       project policy, run and lab scope hashes
 internal/research/     run state machine, triage rules, run limits
 internal/source/       repository allowlist, snapshot keys, tree digests
 internal/worker/       JSONL worker protocol and result validation
+internal/workerexec/   worker operations: index, built-in rules, semgrep, lab harnesses
+internal/sandbox/      supervisor: bwrap + systemd scope, artifact verification
+internal/sourceindex/  heuristic source chunker shared by orchestrator and worker
+internal/artifact/     content-addressed artifact storage
 internal/llm/          model client (Anthropic SDK, schema-constrained JSON)
 internal/orchestrator/ run pipeline: leases, indexing, agents, lab dispatch, reports
 internal/store/        PostgreSQL access; migrations/ is embedded
@@ -104,7 +115,7 @@ Everything else (HTTP routing, auth, crypto, SSE, migrations) uses the Go standa
 ```sh
 go test ./...                                                             # unit tests, no database needed
 REMNANT_TEST_DATABASE_URL=postgres://.../scratch go test ./internal/orchestrator/  # pipeline against PostgreSQL
-REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/smoke.sh                # binary + API + orchestrator
+REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/smoke.sh                # binary + API + orchestrator + worker
 ```
 
 Both database-backed suites DROP the `remnant` schema in the database they are given. Neither needs network access or a real model key.

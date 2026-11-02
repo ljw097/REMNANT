@@ -6,11 +6,22 @@
 #
 # The in-process orchestrator runs against scripts/fake_anthropic.py, a local
 # stand-in for the model API, so no network access or real key is needed.
+# When bwrap and a user systemd scope are available, the worker runtime is
+# enabled and the lab harness really runs (ASan); otherwise the script checks
+# the no-worker path.
 set -u
 : "${REMNANT_SMOKE_DATABASE_URL:?set REMNANT_SMOKE_DATABASE_URL to a disposable database}"
 cd "$(dirname "$0")/.."
 SP=$(mktemp -d)
 go build -o $SP/remnantd ./cmd/remnantd || exit 1
+go build -o $SP/remnant-worker ./cmd/remnant-worker || exit 1
+WORKER=off   # SMOKE_WORKER=off forces the no-worker path
+if [ "${SMOKE_WORKER:-auto}" != off ] && command -v bwrap >/dev/null && command -v cc >/dev/null &&
+   systemd-run --user --scope -q true 2>/dev/null; then
+  WORKER=bwrap
+fi
+export REMNANT_WORKER=$WORKER
+echo "worker runtime: $WORKER"
 
 export REMNANT_DATABASE_URL=$REMNANT_SMOKE_DATABASE_URL
 export REMNANT_MASTER_KEY=$(head -c32 /dev/urandom | base64)
@@ -19,15 +30,25 @@ export REMNANT_LISTEN=127.0.0.1:58080
 PSQL=psql_; psql_() { psql "$REMNANT_SMOKE_DATABASE_URL" -tAq "$@"; }
 $PSQL -c 'DROP SCHEMA IF EXISTS remnant CASCADE' 2>/dev/null
 mkdir -p $SP/data/snapshots/demo/src
+mkdir -p $SP/data/snapshots/demo/test $SP/data/snapshots/demo/.remnant/lab
 cat > $SP/data/snapshots/demo/src/parser.c <<'C'
 #include <string.h>
-
+struct req { char name[8]; };
 int parse(struct req *r, const char *buf, size_t len)
 {
 	memcpy(r->name, buf, len);
 	return 0;
 }
 C
+cat > $SP/data/snapshots/demo/test/main.c <<'C'
+#include <stddef.h>
+struct req { char name[8]; };
+int parse(struct req *r, const char *buf, size_t len);
+int main(void) { struct req r; return parse(&r, "0123456789abcdef", 16); }
+C
+cat > $SP/data/snapshots/demo/.remnant/lab/asan_test <<'SH'
+cc -fsanitize=address -g -O0 -o "$TMPDIR/t" src/parser.c test/main.c && "$TMPDIR/t"
+SH
 
 pass=0; fail=0
 check() { # name expected actual
@@ -107,7 +128,7 @@ check "run detail" 200 "$(req $RES GET /runs/$RUN)"; check "tokens recorded" 200
 check "hypotheses" 200 "$(req $RES GET /runs/$RUN/hypotheses)"; check "one hypothesis" 1 "$(j ".__len__()")"
 HYP=$(j "[0]['id']")
 check "hypothesis in triage" triage/supports/high "$(j "[0]['status']")/$(j "[0]['skeptic_verdict']")/$(j "[0]['triage_confidence']")"
-check "static skipped event" 1 "$($PSQL -c "select count(*) from remnant.events where run_id=$RUN and event_type='stage.skipped'")"
+check "static skipped event" "$([ $WORKER = bwrap ] && echo 0 || echo 1)" "$($PSQL -c "select count(*) from remnant.events where run_id=$RUN and event_type='stage.skipped'")"
 
 check "hypothesis detail" 200 "$(req $RES GET /hypotheses/$HYP)"
 SRC=$(python3 -c "import json; e=[e for e in json.load(open('$SP/body'))['evidence'] if e['evidence_kind']=='source_location'][0]; print(f\"{e['file_path']}:{e['line_start']}-{e['line_end']} {e['symbol']}\")")
@@ -135,19 +156,31 @@ check "self approval" 403 "$(req $ADMIN POST /approvals/$APR '{"decision":"appro
 check "approve" 200 "$(req $REV POST /approvals/$APR '{"decision":"approved"}')"
 check "decide twice" 409 "$(req $REV POST /approvals/$APR '{"decision":"denied"}')"
 
-# No worker runtime is configured: the lab experiment is recorded as not run
-# and the hypothesis is handed back.
 check "lab phase back to review" review_required "$(wait_status $RUN review_required)"
 check "experiments" 200 "$(req $RES GET /runs/$RUN/experiments)"
-check "lab experiment not run" "lab.asan_test failed" "$(j "[0]['operation']") $(j "[0]['status']")"
-check "hypothesis handed back" accepted "$($PSQL -c "select status from remnant.hypotheses where id=$HYP")"
-check "validated without lab finding" 409 "$(req $REV PATCH /hypotheses/$HYP '{"decision":"validated"}')"
+if [ "$WORKER" = bwrap ]; then
+  # The worker ran the built-in analyzer during static validation and the
+  # approved ASan harness in the lab phase, both inside the sandbox.
+  check "static experiment" "static.patterns finding" "$(j "[0]['operation']") $(j "[0]['status']")"
+  check "lab experiment" "lab.asan_test finding" "$(j "[1]['operation']") $(j "[1]['status']")"
+  check "sanitizer observation" "src/parser.c" "$($PSQL -c "select file_path from remnant.evidence where run_id=$RUN and evidence_kind='runtime_observation' and metadata->>'rule_id'='AddressSanitizer' limit 1")"
+  check "lab log imported" 1 "$($PSQL -c "select count(*) from remnant.artifacts where run_id=$RUN and artifact_kind='test_log' and name='lab.log'")"
+  check "hypothesis awaiting verdict" validation_pending "$($PSQL -c "select status from remnant.hypotheses where id=$HYP")"
+  check "validated" 200 "$(req $REV PATCH /hypotheses/$HYP '{"decision":"validated","reviewer_note":"ASan reproduces the overflow"}')"
+  check "pattern promoted" 200 "$(req $REV POST /patterns/$PAT/review '{"status":"validated"}')"
+else
+  # No worker runtime: the lab experiment is recorded as not run and the
+  # hypothesis is handed back.
+  check "lab experiment not run" "lab.asan_test failed" "$(j "[0]['operation']") $(j "[0]['status']")"
+  check "hypothesis handed back" accepted "$($PSQL -c "select status from remnant.hypotheses where id=$HYP")"
+  check "validated without lab finding" 409 "$(req $REV PATCH /hypotheses/$HYP '{"decision":"validated"}')"
+fi
 
 check "finalize by admin-less researcher" 202 "$(req $RES POST /runs/$RUN/finalize)"
 check "run completed" completed "$(wait_status $RUN completed)"
 check "finalize twice" 409 "$(req $RES POST /runs/$RUN/finalize)"
 check "artifacts" 200 "$(req $RES GET /runs/$RUN/artifacts)"
-check "index + 2 reports" "source_index,report,report" "$(j "[0]['artifact_kind']"),$(j "[1]['artifact_kind']"),$(j "[2]['artifact_kind']")"
+check "index + 2 reports" "source_index,report,report" "$(python3 -c "import json; print(','.join(a['artifact_kind'] for a in json.load(open('$SP/body')) if a['artifact_kind'] in ('source_index','report')))")"
 check "storage key hidden" 0 "$(grep -c storage_key $SP/body)"
 MD=$(python3 -c "import json; print([a for a in json.load(open('$SP/body')) if a['name'].endswith('.md')][0]['id'])")
 check "report download" 200 "$(curl -s -D $SP/hdr -o $SP/report.md -w '%{http_code}' -H "Authorization: Bearer $RES" $B/runs/$RUN/artifacts/$MD)"

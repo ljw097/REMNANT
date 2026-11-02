@@ -34,7 +34,7 @@ type Options struct {
 	// experiments are recorded as not run.
 	Worker worker.Worker
 	// StaticOperations run per target during static_validation. Default
-	// static.semgrep.
+	// static.patterns.
 	StaticOperations []string
 	// NewClient builds a model client from a decrypted profile. Default
 	// llm.NewClient.
@@ -58,7 +58,7 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, opts Options) *Or
 		opts.Concurrency = 2
 	}
 	if opts.StaticOperations == nil {
-		opts.StaticOperations = []string{"static.semgrep"}
+		opts.StaticOperations = []string{"static.patterns"}
 	}
 	if opts.NewClient == nil {
 		opts.NewClient = llm.NewClient

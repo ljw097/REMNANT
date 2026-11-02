@@ -306,7 +306,7 @@ func TestFullLifecycle(t *testing.T) {
 	if n := e.count(`SELECT count(*) FROM remnant.runs WHERE id = $1 AND input_tokens = 2700 AND output_tokens = 900`, runID); n != 1 {
 		t.Error("token usage not recorded")
 	}
-	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE run_id = $1 AND operation = 'static.semgrep' AND status = 'passed'`, runID); n != 1 {
+	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE run_id = $1 AND operation = 'static.patterns' AND status = 'passed'`, runID); n != 1 {
 		t.Error("static experiment not recorded")
 	}
 	if n := e.count(`SELECT count(*) FROM remnant.evidence WHERE run_id = $1 AND evidence_kind = 'static_finding' AND file_path = 'src/parser.c'`, runID); n != 1 {
@@ -355,8 +355,8 @@ func TestFullLifecycle(t *testing.T) {
 	var md string
 	for _, a := range arts {
 		data, err := os.ReadFile(filepath.Join(e.cfg.ArtifactDir(), a.StorageKey))
-		if a.StorageKey[:7] == "worker/" {
-			continue
+		if a.ArtifactKind == "analyzer_output" || a.ArtifactKind == "test_log" {
+			continue // the fake worker transfers no bytes
 		}
 		must(t, err)
 		sum := sha256.Sum256(data)

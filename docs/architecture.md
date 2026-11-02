@@ -30,7 +30,7 @@ clients (web UI, curl, scripts)
         ├── secrets    AES-256-GCM sealing of model keys
         ├── llm        model client: profile → schema-constrained JSON
         ├── orchestrator  claims runs by lease and drives them through the state machine
-        └── worker runtime  [planned; the orchestrator already speaks its protocol]
+        └── sandbox    supervisor → systemd-run --user --scope → bwrap → remnant-worker
               ├── source indexer (read-only)
               ├── static analyzers (read-only)
               └── local lab runner (approval required; network none)
@@ -153,7 +153,7 @@ Do not ask the model for a single opaque probability. Rank hypotheses by explain
 | `indexing` | Walk each snapshot (regular files of known languages, ≤ 1 MiB, ≤ 20 000 files, no symlinks, no `.git`), split files into symbol regions with a language-aware heuristic, store the symbol index as a `source_index` artifact. | — |
 | `surface_mapping` | Score every region against every pattern: +3 per matched `code_signatures` entry, −2 per `counter_signatures` entry (identifiers match on word boundaries). Keep the best 3 per pattern and target, at most 24 per run, and record each as `source_location` evidence with a line-numbered excerpt and its SHA-256. | — |
 | `hypothesis_generation` | For each candidate, `limits.max_workers` at a time: the **Researcher** decides whether the region carries the pattern's root cause and drafts a hypothesis citing evidence IDs; the **Skeptic** then tries to refute it. | yes |
-| `static_validation` | Each configured analyzer operation (default `static.semgrep`) per target through the worker protocol. Skipped with an event when no worker runtime is configured. | — |
+| `static_validation` | Each configured analyzer operation (`static.patterns`, plus `static.semgrep` when installed) per target in the worker sandbox; findings become `static_finding` evidence. Skipped with an event when no worker runtime is configured. | — |
 
 Model answers are constrained by JSON Schema and then validated again: every cited evidence ID must be one the agent was given, every Skeptic line range must lie inside the cited excerpt, and text fields have length limits. Invalid answers and refusals skip the candidate with an event; the run fails only if every model call errored (for example, a wrong API key). `limits.max_tokens` is the output-token budget (thinking included) across all calls; each call reserves up to 16 000 and returns what it did not use, and generation stops when fewer than 2 048 remain. Token usage is recorded on the run.
 
@@ -161,7 +161,7 @@ The Skeptic's verdict sets the hypothesis's triage priority: `refutes` forces `l
 
 ### Lab phase (`validation_approved` → `lab_validation` → `review_required`)
 
-For every approved approval of the run that has no experiment yet, the orchestrator recomputes the approval's scope hash; if anything moved, the approval is `revoked`. Otherwise it sends the approved `lab.*` operation with the approved limits to the worker, records the experiment (one per approval, enforced by a unique index) and its observations as `runtime_observation` evidence. Without a worker runtime the experiment is recorded as `failed: not run` and the hypothesis returns to `accepted`.
+For every approved approval of the run that has no experiment yet, the orchestrator recomputes the approval's scope hash; if anything moved, the approval is `revoked`. Otherwise it sends the approved `lab.*` operation with the approved limits to the worker, records the experiment (one per approval, enforced by a unique index) and its observations as `runtime_observation` evidence. If nothing could run (no worker runtime, the operation is unsupported, the snapshot has no harness, or the workspace is unavailable) the experiment is recorded as `failed: not run …` and the hypothesis returns to `accepted`.
 
 A reviewer then records `validated` (requires an experiment with status `finding`) or `not_reproducible`.
 

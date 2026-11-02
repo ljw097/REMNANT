@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/ljw097/remnant/internal/artifact"
+	"github.com/ljw097/remnant/internal/config"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/research"
+	"github.com/ljw097/remnant/internal/source"
 	"github.com/ljw097/remnant/internal/store"
 	"github.com/ljw097/remnant/internal/worker"
 )
@@ -144,11 +150,18 @@ func (j *job) runWorker(ctx context.Context, targetID int64, revision, op string
 		}
 		return "", stageErr(ctx, ctx.Err())
 	case errors.As(err, &werr):
-		status := "failed"
-		if werr.Code == "RESOURCE_LIMIT" {
-			status = "resource_limited"
+		switch werr.Code {
+		case "UNSUPPORTED", "INVALID_INPUT", "WORKSPACE_UNAVAILABLE":
+			// Nothing ran: the operation, its harness or the workspace was
+			// not available.
+			if _, ferr := finish("failed", "not run: "+werr.Code+": "+werr.Summary, nil, nil, nil); ferr != nil {
+				return "", ferr
+			}
+			return "not_run", nil
+		case "RESOURCE_LIMIT":
+			return finish("resource_limited", werr.Code+": "+werr.Summary, nil, nil, nil)
 		}
-		return finish(status, werr.Code+": "+werr.Summary, nil, nil, nil)
+		return finish("failed", werr.Code+": "+werr.Summary, nil, nil, nil)
 	case err != nil:
 		return finish("failed", "worker error: "+err.Error(), nil, nil, nil)
 	}
@@ -175,9 +188,39 @@ func (j *job) runWorker(ctx context.Context, targetID int64, revision, op string
 		if approvalID != nil {
 			artKind = "test_log"
 		}
-		arts = append(arts, store.ArtifactInput{Kind: artKind, Name: a.Name, StorageKey: "worker/" + req.RequestID + "/" + a.Name,
+		// The worker runtime has already verified and imported the bytes
+		// under this key.
+		arts = append(arts, store.ArtifactInput{Kind: artKind, Name: a.Name, StorageKey: artifact.Key(j.runID, a.SHA256, a.Name),
 			SHA256: a.SHA256, SizeBytes: a.SizeBytes, MediaType: a.MediaType})
 	}
 	exit := res.ExitCode
 	return finish(status, res.Summary, &exit, ev, arts)
+}
+
+// SnapshotResolver maps worker mount IDs ("target_<id>") to the target's
+// snapshot directory, refusing if the snapshot no longer hashes to the
+// requested revision.
+func SnapshotResolver(st *store.Store, cfg config.Config) func(context.Context, string, string) (string, error) {
+	return func(ctx context.Context, mountID, revision string) (string, error) {
+		raw, ok := strings.CutPrefix(mountID, "target_")
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if !ok || err != nil {
+			return "", fmt.Errorf("unknown mount %q", mountID)
+		}
+		t, err := st.GetTarget(ctx, id)
+		if err != nil {
+			return "", fmt.Errorf("target %d: %w", id, err)
+		}
+		if t.Kind != "local_snapshot" && t.Kind != "lab_fixture" {
+			return "", fmt.Errorf("target %d has no local snapshot", id)
+		}
+		rev, _, err := source.LocalSnapshot(cfg.SnapshotDir(), t.SnapshotKey)
+		if err != nil {
+			return "", err
+		}
+		if rev != revision {
+			return "", fmt.Errorf("target %d changed since it was pinned", id)
+		}
+		return filepath.Join(cfg.SnapshotDir(), t.SnapshotKey), nil
+	}
 }

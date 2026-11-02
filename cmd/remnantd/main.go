@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/config"
 	"github.com/ljw097/remnant/internal/orchestrator"
+	"github.com/ljw097/remnant/internal/sandbox"
 	"github.com/ljw097/remnant/internal/secrets"
 	"github.com/ljw097/remnant/internal/store"
 )
@@ -99,7 +102,17 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 	defer stopOrch()
 	orchDone := make(chan struct{})
 	if cfg.Orchestrator {
-		o := orchestrator.New(st, cfg, log, orchestrator.Options{Concurrency: cfg.OrchestratorConcurrency})
+		opts := orchestrator.Options{Concurrency: cfg.OrchestratorConcurrency, StaticOperations: []string{}}
+		if cfg.Worker == "bwrap" {
+			sup, ops, err := startWorker(ctx, log, st, cfg)
+			if err != nil {
+				return err
+			}
+			opts.Worker, opts.StaticOperations = sup, ops
+		} else {
+			log.Warn("no worker runtime (REMNANT_WORKER=off): static analysis is skipped and lab experiments do not run")
+		}
+		o := orchestrator.New(st, cfg, log, opts)
 		go func() { defer close(orchDone); o.Run(orchCtx) }()
 	} else {
 		log.Info("orchestrator disabled")
@@ -124,6 +137,40 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 	}
 	<-orchDone
 	return serveErr
+}
+
+// startWorker builds the sandbox supervisor and keeps the configured static
+// operations the sandboxed worker actually supports.
+func startWorker(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config) (*sandbox.Supervisor, []string, error) {
+	bin := cfg.WorkerBin
+	if bin == "" {
+		self, err := os.Executable()
+		if err != nil {
+			return nil, nil, err
+		}
+		bin = filepath.Join(filepath.Dir(self), "remnant-worker")
+	}
+	sup, err := sandbox.New(sandbox.Config{
+		WorkerBin: bin, WorkDir: cfg.WorkDir(), ArtifactDir: cfg.ArtifactDir(), RulesDir: cfg.WorkerRules,
+		Resolve: orchestrator.SnapshotResolver(st, cfg), AllowWithoutCgroup: cfg.WorkerAllowNoCgroup, Log: log,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	caps, err := sup.Capabilities(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var ops []string
+	for _, op := range cfg.StaticOperations {
+		if slices.Contains(caps, op) {
+			ops = append(ops, op)
+		} else {
+			log.Warn("static operation not available in the worker environment; skipping it", "operation", op)
+		}
+	}
+	log.Info("worker runtime ready", "enforcement", sup.Enforcement(), "capabilities", caps, "static_operations", ops)
+	return sup, ops, nil
 }
 
 func createUser(ctx context.Context, st *store.Store, args []string) error {

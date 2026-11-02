@@ -27,7 +27,7 @@ Roles are checked per route (see `architecture.md`). Separation of duty for appr
 
 ## Worker isolation
 
-See `worker-protocol.md`. In short: read-only source mount, write-only output directory, no network at the namespace level, non-root, dropped capabilities, seccomp/AppArmor, PID/CPU/memory/time limits, no container-runtime socket, no host home directories, SSH agents, cloud credentials, browser profiles, or REMNANT configuration and secrets. Everything a worker returns is validated before it is stored.
+Implemented by `internal/sandbox` (bwrap inside a systemd user cgroup scope); see `worker-protocol.md`. In short: read-only source mount, write-only output directory, no network at the namespace level, non-root, dropped capabilities, seccomp/AppArmor, PID/CPU/memory/time limits, no container-runtime socket, no host home directories, SSH agents, cloud credentials, browser profiles, or REMNANT configuration and secrets. Everything a worker returns is validated before it is stored.
 
 ## Deployment hardening
 

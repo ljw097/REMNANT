@@ -14,6 +14,7 @@ const Protocol = "remnant.worker.v1"
 // never supplies an executable, command line, environment or mount path.
 var Operations = map[string]struct{ RequiresApproval bool }{
 	"index.symbols":      {},
+	"static.patterns":    {},
 	"static.semgrep":     {},
 	"static.codeql":      {},
 	"static.tree_sitter": {},

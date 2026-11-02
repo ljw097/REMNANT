@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/ljw097/remnant/internal/artifact"
 	"github.com/ljw097/remnant/internal/research"
 	"github.com/ljw097/remnant/internal/store"
 )
@@ -53,24 +52,8 @@ func (j *job) report(ctx context.Context) error {
 func (j *job) writeArtifact(ctx context.Context, kind, name, mediaType string, data []byte) (store.Artifact, error) {
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
-	key := fmt.Sprintf("runs/%d/%s%s", j.runID, digest, filepath.Ext(name))
-	path := filepath.Join(j.o.cfg.ArtifactDir(), filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return store.Artifact{}, err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return store.Artifact{}, err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return store.Artifact{}, err
-	}
-	if err := tmp.Close(); err != nil {
-		return store.Artifact{}, err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	key := artifact.Key(j.runID, digest, name)
+	if err := artifact.Write(j.o.cfg.ArtifactDir(), key, data); err != nil {
 		return store.Artifact{}, err
 	}
 	return j.o.store.InsertArtifact(ctx, j.runID, store.ArtifactInput{

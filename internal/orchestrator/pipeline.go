@@ -15,6 +15,7 @@ import (
 	"github.com/ljw097/remnant/internal/llm"
 	"github.com/ljw097/remnant/internal/research"
 	"github.com/ljw097/remnant/internal/source"
+	"github.com/ljw097/remnant/internal/sourceindex"
 	"github.com/ljw097/remnant/internal/store"
 )
 
@@ -142,13 +143,13 @@ func (j *job) index(ctx context.Context, t store.WorkTarget) error {
 		return err
 	}
 	var files []indexFile
-	var symbols []chunk
-	truncated, err := walkSource(dir, func(f sourceFile) error {
+	var symbols []sourceindex.Chunk
+	truncated, err := sourceindex.Walk(dir, func(f sourceindex.File) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		files = append(files, indexFile{f.Path, f.Language, len(f.Lines), f.SHA256})
-		for _, c := range chunkFile(f.Path, f.Language, f.Lines) {
+		for _, c := range sourceindex.ChunkFile(f.Path, f.Language, f.Lines) {
 			if c.Symbol != "" {
 				symbols = append(symbols, c)
 			}
@@ -171,7 +172,7 @@ func (j *job) index(ctx context.Context, t store.WorkTarget) error {
 	}
 	msg := fmt.Sprintf("Target %d: %d files, %d symbols indexed", t.ID, len(files), len(symbols))
 	if truncated {
-		msg += fmt.Sprintf(" (stopped at %d files)", maxFiles)
+		msg += fmt.Sprintf(" (stopped at %d files)", sourceindex.MaxFiles)
 	}
 	j.event(ctx, "stage.indexed", msg, map[string]any{"target_id": t.ID, "artifact_id": a.ID, "truncated": truncated})
 	return nil
@@ -206,11 +207,11 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) ([]candidat
 		for i := range tops {
 			tops[i].k = candidatesPerPattern
 		}
-		_, err = walkSource(dir, func(f sourceFile) error {
+		_, err = sourceindex.Walk(dir, func(f sourceindex.File) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			for _, c := range chunkFile(f.Path, f.Language, f.Lines) {
+			for _, c := range sourceindex.ChunkFile(f.Path, f.Language, f.Lines) {
 				text := strings.Join(f.Lines[c.Start-1:c.End], "\n")
 				for i, p := range patterns {
 					sc, matched, countered, ok := score(text, p.sigs, p.counters)
