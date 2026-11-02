@@ -559,7 +559,7 @@ dialog.drawer::backdrop { background: rgb(10 12 16 / 0.32); }
 .events .when { color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .events .type { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .events li[data-new="true"] { animation: arrive 900ms ease-out; }
-@keyframes arrive { from { background: var(--accent-soft); } }
+@keyframes arrive { from { background: color-mix(in oklch, var(--info) 10%, var(--surface)); } }
 @media (max-width: 640px) { .events li { grid-template-columns: 1fr; gap: 2px; } }
 
 .live-dot { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-0); color: var(--ink-3); }
@@ -605,7 +605,7 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .mode-card[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
 .mode-card svg { color: var(--ink-2); }
 .mode-card[aria-checked="true"] svg { color: var(--accent); }
-.signin-side ol li[aria-current="step"] svg { color: var(--accent); }
+.signin-side ol li[aria-current="step"] svg { color: var(--info); }
 @media (max-width: 640px) {
   .stageline:not(.mini) .stop:not([data-current="true"]) .name { visibility: hidden; }
   .stageline:not(.mini) .stop[data-current="true"] .name { white-space: nowrap; overflow: visible; }

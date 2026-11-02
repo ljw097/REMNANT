@@ -516,7 +516,7 @@ function ModeSection() {
       <div className="panel-body stack" style={{ gap: 16 }}>
         <div className="mode-cards">
           {(["personal", "team"] as const).map((m) => (
-            <div key={m} className="mode-card" aria-current={mode === m} style={mode === m ? { borderColor: "var(--accent)" } : undefined}>
+            <div key={m} className="mode-card" aria-current={mode === m} style={mode === m ? { borderColor: "var(--info)" } : undefined}>
               <span className="row" style={{ gap: 10 }}>
                 <Icon name={m === "team" ? "users" : "user"} size={18} />
                 <strong>{t(`mode.${m}` as Key)}</strong>
