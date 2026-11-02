@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: remnant
+          POSTGRES_PASSWORD: remnant
+          POSTGRES_DB: remnant
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U remnant" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      DB: postgres://remnant:remnant@localhost:5432/remnant?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Format
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Vet
+        run: go vet ./...
+      - name: Unit and integration tests
+        # The sandbox tests skip themselves where unprivileged user namespaces are unavailable.
+        run: REMNANT_TEST_DATABASE_URL=$DB go test -race -p 1 ./...
+      - name: Smoke test
+        run: REMNANT_SMOKE_DATABASE_URL=$DB SMOKE_WORKER=off scripts/smoke.sh
+      - name: Update end-to-end test
+        run: REMNANT_SMOKE_DATABASE_URL=$DB scripts/update-e2e.sh
+
+  release-dry-run:
+    # Builds and signs exactly as a release would, without publishing, to
+    # prove the signing secret matches the key compiled into remnantd.
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: scripts/release-build.sh v0.0.0-dryrun
+      - name: Sign and verify against the compiled-in key
+        env:
+          REMNANT_RELEASE_SIGNING_KEY: ${{ secrets.REMNANT_RELEASE_SIGNING_KEY }}
+        run: |
+          go run ./cmd/remnant-release sign dist/SHA256SUMS
+          go run ./cmd/remnant-release verify dist/SHA256SUMS
+          cd dist && sha256sum -c SHA256SUMS

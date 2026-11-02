@@ -1,139 +1,325 @@
 openapi: 3.1.0
 info:
-  title: ARTEX REMNANT Research API
-  version: 0.1.0
-  description: Source-first vulnerability research API. All routes require existing ARTEX JWT authentication.
+  title: REMNANT Research API
+  version: 1.0.0
+  description: |
+    Source-first vulnerability research API served by remnantd.
+    Every route except /healthz requires `Authorization: Bearer rmt_…`
+    (issue tokens with `remnantd create-user` / `remnantd create-token`).
+    Roles: admin (everything), researcher (create/run), reviewer (triage/approve).
 servers:
-  - url: /api/research
+  - url: /api/v1
 security:
   - BearerAuth: []
 paths:
-  /projects:
+  /me:
     get:
-      summary: List research projects
+      summary: The authenticated principal
       responses:
         '200':
-          description: Project list
+          description: Principal
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ProjectList' }
+              schema: { $ref: '#/components/schemas/Principal' }
+
+  /system/version:
+    get:
+      summary: Running version and updater state
+      responses:
+        '200':
+          description: Version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string, examples: [v0.2.0, dev] }
+                  commit: { type: string }
+                  update: { $ref: '#/components/schemas/UpdateState' }
+  /system/update:
     post:
-      summary: Create a source-research project
+      summary: Install the latest signed release now and restart (admin)
+      description: |
+        Checks the release source; if a newer release exists, downloads it, verifies the
+        Ed25519 signature and checksums, swaps the binaries and restarts remnantd in place.
+        Runs in progress are requeued by the shutdown and resume after the restart.
+      responses:
+        '202': { description: Installing; poll /system/version }
+        '409': { description: Already up to date, or updates disabled (dev build or REMNANT_AUTO_UPDATE=off), $ref: '#/components/responses/Error' }
+        '502': { description: The release source could not be read or did not verify, $ref: '#/components/responses/Error' }
+  /llm-profiles:
+    get:
+      summary: List model profiles (never includes key material)
+      responses:
+        '200':
+          description: Profiles
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/LLMProfile' } }
+    post:
+      summary: Create a model profile (admin). The API key is encrypted at rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLLMProfile' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/LLMProfile' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /projects:
+    get:
+      summary: List projects with target and active-run counts
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Project' } }
+    post:
+      summary: Create a project (researcher)
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateProject' }
       responses:
-        '201': { description: Created }
-        '400': { $ref: '#/components/responses/BadRequest' }
-  /projects/{projectId}:
-    parameters:
-      - $ref: '#/components/parameters/ProjectId'
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /projects/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
-      summary: Get project and policy
+      summary: Get a project
       responses:
-        '200': { description: Project details }
-        '404': { description: Not found }
+        '200': { description: Project, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+        '404': { $ref: '#/components/responses/Error' }
     patch:
-      summary: Update project metadata or selected LLM profile
+      summary: Update project fields (researcher). Omitted fields are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                description: { type: string, maxLength: 8000 }
+                status: { type: string, enum: [active, paused, archived] }
+                llm_profile_id: { type: integer, format: int64 }
+                clear_llm_profile: { type: boolean }
+                policy: { $ref: '#/components/schemas/Policy' }
       responses:
-        '200': { description: Updated }
-  /projects/{projectId}/targets:
-    parameters:
-      - $ref: '#/components/parameters/ProjectId'
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /projects/{id}/targets:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
-      summary: List pinned source targets
+      summary: List targets of a project
       responses:
-        '200': { description: Target list }
+        '200':
+          description: Targets
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Target' } }
     post:
-      summary: Add an owned or explicitly authorized repository/local snapshot
-      description: Remote source URI must pass the server-side repository-host allowlist and SSRF checks. Target is pinned to an immutable commit before analysis.
+      summary: Register a source target (researcher)
+      description: |
+        `local_snapshot` / `lab_fixture`: `snapshot_key` names a directory under
+        `$REMNANT_DATA_DIR/snapshots`; it is pinned immediately to
+        `sha256:<tree digest>` and becomes `ready`.
+        `git_repository`: `source_uri` must be https on an allowlisted host
+        (`REMNANT_REPO_HOSTS`) and `source_ref` a branch, tag or commit (default HEAD).
+        The target is `pending` until the orchestrator's fetcher checks it out and pins
+        the commit (`ready`), or `unavailable` with `metadata.fetch_error`.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateTarget' }
       responses:
-        '201': { description: Target created }
-        '403': { description: Source policy denied }
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Target' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: Repository host not allowlisted, $ref: '#/components/responses/Error' }
+        '409': { description: Duplicate snapshot_key in project, $ref: '#/components/responses/Error' }
+        '422': { description: Snapshot directory missing or not a directory, $ref: '#/components/responses/Error' }
+
   /patterns:
     get:
-      summary: Search historical and reviewed root-cause patterns
+      summary: Search root-cause patterns
       parameters:
-        - in: query
-          name: q
-          schema: { type: string }
-        - in: query
-          name: vulnerability_class
-          schema: { type: string }
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: vulnerability_class, schema: { type: string } }
+        - { in: query, name: language, schema: { type: string } }
       responses:
-        '200': { description: Pattern list }
+        '200':
+          description: Up to 200 patterns, newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Pattern' } }
+    post:
+      summary: Create a pattern (researcher). Starts unreviewed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePattern' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Pattern' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /patterns/{id}/review:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Review a pattern (reviewer)
+      description: The author cannot review their own pattern. `validated` requires a validated hypothesis derived from it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [reviewed, validated, rejected] }
+      responses:
+        '200': { description: Reviewed, content: { application/json: { schema: { $ref: '#/components/schemas/Pattern' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+
   /runs:
     get:
-      summary: List research runs
+      summary: List runs
       parameters:
-        - in: query
-          name: project_id
-          schema: { type: integer, format: int64 }
-        - in: query
-          name: status
-          schema: { type: string }
+        - { in: query, name: project_id, schema: { type: integer, format: int64 } }
+        - { in: query, name: status, schema: { $ref: '#/components/schemas/RunStatus' } }
       responses:
-        '200': { description: Run list }
+        '200':
+          description: Up to 200 runs, newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Run' } }
     post:
-      summary: Queue a source-only research run
+      summary: Queue a source-only run (researcher)
+      description: Pins every target to its current revision and records the run scope hash.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateRun' }
       responses:
-        '202': { description: Queued }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '403': { description: Scope or policy rejected }
-  /runs/{runId}:
-    parameters:
-      - $ref: '#/components/parameters/RunId'
+        '202': { description: Queued, content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { description: Project not active, $ref: '#/components/responses/Error' }
+        '422': { description: Target not ready / not in project, unknown pattern, or no usable LLM profile, $ref: '#/components/responses/Error' }
+  /runs/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
-      summary: Get run state, targets, patterns and counters
+      summary: Run with pinned targets, patterns and hypothesis counts
       responses:
-        '200': { description: Run details }
-        '404': { description: Not found }
-  /runs/{runId}/cancel:
-    parameters:
-      - $ref: '#/components/parameters/RunId'
+        '200': { description: Run, content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /runs/{id}/cancel:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
-      summary: Cancel a research run and terminate its workers
+      summary: Cancel a non-terminal run (researcher)
       responses:
-        '202': { description: Cancellation requested }
-  /runs/{runId}/events:
-    parameters:
-      - $ref: '#/components/parameters/RunId'
+        '202': { description: Cancelled }
+        '409': { description: Run already terminal, $ref: '#/components/responses/Error' }
+  /runs/{id}/pause:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Pause a waiting or running run (researcher)
+      description: |
+        Allowed while the run is queued, validation_approved, report_ready or in an automatic stage.
+        An orchestrator working it stops at its next heartbeat (≤ 10 s). Recorded work is kept;
+        an interrupted lab experiment is recorded as cancelled and spends its approval.
+      responses:
+        '202': { description: Paused }
+        '409': { description: The run cannot be paused in its current status, $ref: '#/components/responses/Error' }
+  /runs/{id}/resume:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Resume a paused run (researcher)
+      description: The run returns to resume_status and continues from resume_stage; completed stages are not repeated.
+      responses:
+        '202': { description: Resumed, content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } } }
+        '409': { description: The run is not paused, $ref: '#/components/responses/Error' }
+  /runs/{id}/finalize:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Move a reviewed run to report_ready (researcher or reviewer)
+      description: The orchestrator then renders the JSON and Markdown report artifacts and completes the run.
+      responses:
+        '202': { description: Accepted }
+        '409': { description: Run is not review_required, or lab approvals are still pending, $ref: '#/components/responses/Error' }
+  /runs/{id}/experiments:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
-      summary: Subscribe to run progress using Server-Sent Events
+      summary: Analyzer and lab experiments of a run
       responses:
         '200':
-          description: text/event-stream
+          description: Experiments
           content:
-            text/event-stream:
-              schema: { type: string }
-  /runs/{runId}/hypotheses:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Experiment' } }
+  /runs/{id}/artifacts/{artifactId}:
     parameters:
-      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/Id'
+      - { name: artifactId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
     get:
-      summary: List hypotheses and evidence counts
+      summary: Download artifact content stored by remnantd (indexes, reports)
+      description: The `X-Content-SHA256` header carries the recorded digest. Worker artifacts whose bytes were never transferred return 404.
       responses:
-        '200': { description: Hypothesis list }
-  /hypotheses/{hypothesisId}:
+        '200': { description: Artifact bytes with the artifact's media type }
+        '404': { $ref: '#/components/responses/Error' }
+  /runs/{id}/events:
     parameters:
-      - $ref: '#/components/parameters/HypothesisId'
+      - $ref: '#/components/parameters/Id'
+      - { in: header, name: Last-Event-ID, schema: { type: integer } }
+      - { in: query, name: after, schema: { type: integer }, description: Same as Last-Event-ID, for clients that cannot set headers }
     get:
-      summary: Get hypothesis and evidence
+      summary: Server-Sent Events stream of the run timeline
+      description: |
+        Each event is `id: <event id>`, `event: <event_type>`, `data: <Event JSON>`.
+        After a terminal run's last event the server sends `event: end` and closes.
       responses:
-        '200': { description: Hypothesis detail }
+        '200': { description: text/event-stream, content: { text/event-stream: { schema: { type: string } } } }
+  /runs/{id}/hypotheses:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Hypotheses of a run with evidence counts
+      responses:
+        '200':
+          description: Hypotheses
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Hypothesis' } }
+  /runs/{id}/artifacts:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Artifact manifest of a run
+      responses:
+        '200':
+          description: Artifacts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Artifact' } }
+
+  /hypotheses/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Hypothesis with its evidence
+      responses:
+        '200': { description: Hypothesis, content: { application/json: { schema: { $ref: '#/components/schemas/HypothesisDetail' } } } }
+        '404': { $ref: '#/components/responses/Error' }
     patch:
-      summary: Human triage decision
+      summary: Human decision on a hypothesis (reviewer)
+      description: |
+        accepted / rejected / duplicate apply to draft or triage hypotheses.
+        validated requires a lab experiment for the hypothesis that ended in `finding`;
+        not_reproducible requires one that finished. Both apply to validation_pending hypotheses.
       requestBody:
         required: true
         content:
@@ -142,28 +328,38 @@ paths:
               type: object
               required: [decision]
               properties:
-                decision:
-                  type: string
-                  enum: [accepted, rejected, duplicate]
+                decision: { type: string, enum: [accepted, rejected, duplicate, validated, not_reproducible] }
                 reviewer_note: { type: string, maxLength: 8000 }
       responses:
-        '200': { description: Updated }
-  /hypotheses/{hypothesisId}/lab-approval:
-    parameters:
-      - $ref: '#/components/parameters/HypothesisId'
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/HypothesisDetail' } } } }
+        '409': { description: Decision not allowed in the current status, or no supporting lab experiment, $ref: '#/components/responses/Error' }
+  /hypotheses/{id}/lab-approval:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
-      summary: Request human approval for a local no-network lab test
-      description: Creates a pending approval bound to exact target commit and policy hash. Does not execute the test.
-      responses:
-        '201': { description: Approval request created }
-  /approvals/{approvalId}:
-    parameters:
-      - name: approvalId
-        in: path
+      summary: Request approval for a local, no-network lab experiment (researcher)
+      description: |
+        Requires an accepted hypothesis, a run in `review_required`, an unchanged
+        target revision and a project policy with `dynamic_mode: local_lab_only`.
+        Creates a pending approval bound to a scope hash; it never runs anything.
+      requestBody:
         required: true
-        schema: { type: integer, format: int64 }
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation, summary]
+              properties:
+                operation: { type: string, enum: [lab.unit_test, lab.asan_test, lab.ubsan_test, lab.libfuzzer] }
+                summary: { type: string, maxLength: 8000 }
+                limits: { $ref: '#/components/schemas/LabLimits' }
+      responses:
+        '201': { description: Pending approval, content: { application/json: { schema: { $ref: '#/components/schemas/Approval' } } } }
+        '403': { description: Project policy disables dynamic testing, $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /approvals/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
-      summary: Approve or deny a pending local-lab validation
+      summary: Approve or deny a pending lab approval (reviewer, never the requester)
       requestBody:
         required: true
         content:
@@ -175,117 +371,346 @@ paths:
                 decision: { type: string, enum: [approved, denied] }
                 reviewer_note: { type: string, maxLength: 8000 }
       responses:
-        '200': { description: Decision recorded }
-        '409': { description: Approval stale because target revision or policy changed }
-  /reports/{runId}:
-    parameters:
-      - $ref: '#/components/parameters/RunId'
-    get:
-      summary: Get generated Markdown/JSON report metadata
-      responses:
-        '200': { description: Report metadata }
-  /llm-profiles:
-    get:
-      summary: List existing ARTEX LLM profiles without exposing secrets
-      responses:
-        '200':
-          description: Masked profile list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id: { type: integer, format: int64 }
-                    name: { type: string }
-                    format: { type: string }
-                    model: { type: string }
-                    has_api_key: { type: boolean }
-                    api_key_hint: { type: string }
+        '200': { description: Decision recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Approval' } } } }
+        '403': { description: Requester tried to decide their own request, $ref: '#/components/responses/Error' }
+        '409': { description: Already decided, or stale (expired, revision/scope/policy changed) — a stale approval is marked expired, $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
-    BearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    BearerAuth: { type: http, scheme: bearer }
   parameters:
-    ProjectId:
-      name: projectId
-      in: path
-      required: true
-      schema: { type: integer, format: int64 }
-    RunId:
-      name: runId
-      in: path
-      required: true
-      schema: { type: integer, format: int64 }
-    HypothesisId:
-      name: hypothesisId
-      in: path
-      required: true
-      schema: { type: integer, format: int64 }
+    Id: { name: id, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
   responses:
-    BadRequest:
-      description: Invalid request or policy rejected
+    Error:
+      description: Error
       content:
         application/json:
           schema:
             type: object
             properties:
               error: { type: string }
-              code: { type: string }
+              code: { type: string, enum: [bad_request, unauthorized, forbidden, not_found, conflict, invalid, source_policy, snapshot_unavailable, update_source, internal] }
   schemas:
-    ProjectList:
-      type: array
-      items:
-        type: object
-        properties:
-          id: { type: integer, format: int64 }
-          name: { type: string }
-          status: { type: string }
-          llm_profile_id: { type: [integer, 'null'] }
+    Principal:
+      type: object
+      properties:
+        user_id: { type: integer, format: int64 }
+        username: { type: string }
+        role: { type: string, enum: [admin, researcher, reviewer] }
+    UpdateState:
+      type: object
+      properties:
+        current: { type: string }
+        mode: { type: string, enum: [off, check, install] }
+        latest: { type: string }
+        release_url: { type: string }
+        available: { type: boolean }
+        status: { type: string, enum: [idle, checking, installing, restarting, disabled] }
+        last_checked: { type: string, format: date-time }
+        last_error: { type: string }
+    LLMProfile:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        provider: { type: string, enum: [anthropic] }
+        base_url: { type: string }
+        model: { type: string }
+        effort: { type: string, enum: [low, medium, high, xhigh, max] }
+        has_api_key: { type: boolean }
+        api_key_hint: { type: string, description: 'Last four characters, e.g. "…a1B2"' }
+        updated_at: { type: string, format: date-time }
+    CreateLLMProfile:
+      type: object
+      additionalProperties: false
+      required: [name, provider, model, api_key]
+      properties:
+        name: { type: string, maxLength: 120 }
+        provider: { type: string, enum: [anthropic] }
+        base_url: { type: string, description: Optional API base URL override }
+        model: { type: string, examples: [claude-opus-5-5] }
+        effort: { type: string, enum: [low, medium, high, xhigh, max], default: high }
+        api_key: { type: string, writeOnly: true }
+    Policy:
+      type: object
+      required: [source_mode, dynamic_mode, network]
+      properties:
+        source_mode: { const: read_only }
+        dynamic_mode: { type: string, enum: [disabled, local_lab_only], default: disabled }
+        network: { const: none }
+    Project:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, paused, archived] }
+        llm_profile_id: { type: [integer, 'null'], format: int64 }
+        policy: { $ref: '#/components/schemas/Policy' }
+        target_count: { type: integer }
+        active_runs: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     CreateProject:
       type: object
+      additionalProperties: false
       required: [name]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         description: { type: string, maxLength: 8000 }
         llm_profile_id: { type: integer, format: int64 }
-        policy:
-          type: object
-          properties:
-            source_mode: { const: read_only }
-            dynamic_mode: { const: local_lab_only }
-            network: { const: none }
+        policy: { $ref: '#/components/schemas/Policy' }
+    Target:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        project_id: { type: integer, format: int64 }
+        kind: { type: string, enum: [git_repository, local_snapshot, lab_fixture] }
+        display_name: { type: string }
+        source_uri: { type: string }
+        source_ref: { type: string }
+        snapshot_key: { type: string }
+        revision: { type: string, description: 'Git commit SHA or "sha256:<tree digest>"' }
+        tree_sha256: { type: string }
+        primary_language: { type: string }
+        status: { type: string, enum: [pending, ready, unavailable, quarantined] }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
     CreateTarget:
       type: object
+      additionalProperties: false
       required: [kind, display_name, snapshot_key]
       properties:
         kind: { type: string, enum: [git_repository, local_snapshot, lab_fixture] }
-        display_name: { type: string }
-        source_uri: { type: string, description: Allow-listed repository URL only; no arbitrary URL targets }
+        display_name: { type: string, maxLength: 200 }
+        source_uri: { type: string, description: git_repository only; https on an allowlisted host }
+        source_ref: { type: string, maxLength: 255 }
+        snapshot_key: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,127}$' }
+        primary_language: { type: string, maxLength: 40 }
+    Pattern:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        parent_pattern_id: { type: [integer, 'null'] }
+        source_kind: { type: string, enum: [historical, validated_internal, researcher_authored] }
         source_ref: { type: string }
-        snapshot_key: { type: string, description: Server-issued storage key; never an absolute filesystem path }
+        title: { type: string }
+        vulnerability_class: { type: string }
+        cwe_id: { type: string }
+        language: { type: string }
+        root_cause: { type: string }
+        preconditions: { type: array, items: { type: string } }
+        lifecycle_points: { type: array, items: { type: string } }
+        code_signatures: { type: array, items: { type: string } }
+        counter_signatures: { type: array, items: { type: string } }
+        patch_semantics: { type: object }
+        version: { type: integer }
+        validation_status: { type: string, enum: [unreviewed, reviewed, validated, rejected] }
+        created_by: { type: [integer, 'null'] }
+        reviewed_by: { type: [integer, 'null'] }
+        reviewed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreatePattern:
+      type: object
+      additionalProperties: false
+      required: [title, vulnerability_class, root_cause]
+      properties:
+        source_kind: { type: string, enum: [historical, researcher_authored], default: researcher_authored }
+        source_ref: { type: string, description: Advisory/CVE/patch reference }
+        title: { type: string, maxLength: 300 }
+        vulnerability_class: { type: string, maxLength: 100 }
+        cwe_id: { type: string, maxLength: 20 }
+        language: { type: string, maxLength: 40 }
+        root_cause: { type: string, maxLength: 20000 }
+        preconditions: { type: array, items: { type: string } }
+        lifecycle_points: { type: array, items: { type: string } }
+        code_signatures: { type: array, items: { type: string } }
+        counter_signatures: { type: array, items: { type: string } }
+        patch_semantics: { type: object }
+    RunStatus:
+      type: string
+      enum: [queued, collecting, indexing, surface_mapping, hypothesis_generation, static_validation, review_required, validation_approved, lab_validation, report_ready, paused, completed, cancelled, failed, timed_out]
+    Limits:
+      type: object
+      properties:
+        max_workers: { type: integer, minimum: 1, maximum: 4, default: 2 }
+        wall_seconds: { type: integer, minimum: 60, maximum: 3600, default: 900 }
+        max_tokens: { type: integer, minimum: 4000, maximum: 2000000, default: 200000, description: Output-token budget (thinking included) across every model call of the run, including earlier attempts }
     CreateRun:
       type: object
-      required: [project_id, target_ids, pattern_ids, mode]
+      additionalProperties: false
+      required: [project_id, target_ids]
       properties:
         project_id: { type: integer, format: int64 }
-        target_ids:
-          type: array
-          minItems: 1
-          maxItems: 10
-          items: { type: integer, format: int64 }
-        pattern_ids:
-          type: array
-          maxItems: 100
-          items: { type: integer, format: int64 }
+        target_ids: { type: array, minItems: 1, maxItems: 10, items: { type: integer, format: int64 } }
+        pattern_ids: { type: array, maxItems: 100, items: { type: integer, format: int64 } }
+        llm_profile_id: { type: integer, format: int64, description: Defaults to the project's profile }
+        limits: { $ref: '#/components/schemas/Limits' }
+    Run:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        project_id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/RunStatus' }
         mode: { const: source_only }
-        llm_profile_id: { type: integer, format: int64 }
-        limits:
-          type: object
+        limits: { $ref: '#/components/schemas/Limits' }
+        policy: { $ref: '#/components/schemas/Policy' }
+        scope_hash: { type: string }
+        llm_profile_id: { type: [integer, 'null'] }
+        started_by: { type: [integer, 'null'] }
+        error_summary: { type: string }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        resume_stage: { type: string, description: Source stage the run continues from after a pause or interruption; empty when none }
+        resume_status: { type: string, description: Status a paused run returns to when resumed; empty unless paused }
+        attempts: { type: integer, description: Times the run was recovered after its orchestrator died (failed after 3) }
+        active_ms: { type: integer, description: Time spent in automatic source stages; wall_seconds applies to this }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/Run'
+        - type: object
           properties:
-            max_workers: { type: integer, minimum: 1, maximum: 4, default: 2 }
-            wall_seconds: { type: integer, minimum: 60, maximum: 3600, default: 900 }
-            max_tokens: { type: integer, minimum: 1000, maximum: 50000, default: 12000 }
+            targets:
+              type: array
+              items:
+                type: object
+                properties:
+                  target_id: { type: integer, format: int64 }
+                  revision: { type: string }
+            pattern_ids: { type: array, items: { type: integer, format: int64 } }
+            hypothesis_counts: { type: object, additionalProperties: { type: integer } }
+    Hypothesis:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        target_id: { type: integer, format: int64 }
+        pattern_id: { type: [integer, 'null'] }
+        title: { type: string }
+        claim: { type: string }
+        vulnerability_class: { type: string }
+        cwe_id: { type: string }
+        status: { type: string, enum: [draft, triage, accepted, rejected, validation_pending, validated, not_reproducible, duplicate] }
+        triage_confidence: { type: string, enum: [low, medium, high] }
+        skeptic_verdict: { type: string, enum: ['', supports, weakens, refutes] }
+        facts: { type: array, items: { type: string } }
+        preconditions: { type: array, items: { type: string } }
+        unknowns: { type: array, items: { type: string } }
+        affected_symbols: { type: array, items: { type: string } }
+        expected_observation: { type: string }
+        counter_evidence: { type: array, items: { type: string } }
+        reviewer_note: { type: string }
+        reviewed_by: { type: [integer, 'null'] }
+        reviewed_at: { type: [string, 'null'], format: date-time }
+        evidence_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Evidence:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        hypothesis_id: { type: [integer, 'null'] }
+        target_id: { type: integer, format: int64 }
+        evidence_kind: { type: string, enum: [source_location, call_path, data_flow, static_finding, build_result, runtime_observation, counter_evidence, external_reference] }
+        source_uri: { type: string }
+        file_path: { type: string }
+        line_start: { type: [integer, 'null'] }
+        line_end: { type: [integer, 'null'] }
+        symbol: { type: string }
+        revision: { type: string }
+        content_sha256: { type: string }
+        summary: { type: string }
+        excerpt: { type: string }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+    HypothesisDetail:
+      allOf:
+        - $ref: '#/components/schemas/Hypothesis'
+        - type: object
+          properties:
+            evidence: { type: array, items: { $ref: '#/components/schemas/Evidence' } }
+    LabLimits:
+      type: object
+      properties:
+        wall_seconds: { type: integer, minimum: 1, maximum: 3600, default: 300 }
+        memory_mb: { type: integer, minimum: 64, maximum: 16384, default: 2048 }
+        cpu_cores: { type: integer, minimum: 1, maximum: 8, default: 2 }
+        max_processes: { type: integer, minimum: 1, maximum: 256, default: 32 }
+    Approval:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        hypothesis_id: { type: integer, format: int64 }
+        target_id: { type: integer, format: int64 }
+        action_class: { const: local_lab_validation }
+        target_revision: { type: string }
+        scope:
+          type: object
+          description: The exact scope being approved; scope_hash is SHA-256 of this object.
+          properties:
+            action_class: { type: string }
+            operation: { type: string }
+            run_scope_hash: { type: string }
+            hypothesis_id: { type: integer }
+            target_id: { type: integer }
+            revision: { type: string }
+            network: { const: none }
+            limits: { $ref: '#/components/schemas/LabLimits' }
+        scope_hash: { type: string }
+        request_summary: { type: string }
+        decision: { type: string, enum: [pending, approved, denied, expired, revoked] }
+        requested_by: { type: integer, format: int64 }
+        decided_by: { type: [integer, 'null'] }
+        reviewer_note: { type: string }
+        decided_at: { type: [string, 'null'], format: date-time }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    Artifact:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        experiment_id: { type: [integer, 'null'] }
+        artifact_kind: { type: string }
+        name: { type: string }
+        sha256: { type: string }
+        size_bytes: { type: integer }
+        media_type: { type: string }
+        classification: { type: string, enum: [research_internal, sensitive, redacted] }
+        created_at: { type: string, format: date-time }
+    Experiment:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        hypothesis_id: { type: [integer, 'null'] }
+        approval_id: { type: [integer, 'null'] }
+        target_id: { type: [integer, 'null'] }
+        operation: { type: string }
+        request_id: { type: string }
+        status: { type: string, enum: [queued, running, passed, finding, failed, resource_limited, cancelled] }
+        network_mode: { const: none }
+        workspace_revision: { type: string }
+        config: { type: object }
+        result_summary: { type: string }
+        exit_code: { type: [integer, 'null'] }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    Event:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        event_type:
+          type: string
+          examples: [run.queued, run.status, stage.collected, stage.indexed, stage.mapped, stage.generated, stage.skipped,
+                     hypothesis.created, hypothesis.challenged, hypothesis.triaged, agent.refused, agent.invalid_output, agent.error,
+                     experiment.finished, approval.requested, approval.decided, approval.revoked, report.generated]
+        stage: { type: string }
+        message: { type: string }
+        payload: { type: object }
+        created_at: { type: string, format: date-time }

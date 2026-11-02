@@ -1,50 +1,57 @@
-# REMNANT UI specification
+# REMNANT web UI specification
 
-The UI belongs inside the existing Next.js frontend and uses the existing authentication, layout, theme and SSE client conventions. Add a top-level `RESEARCH` navigation item; do not create a separate login or separate key-management system.
+The UI is a separate static single-page application that talks only to `remnantd`'s `/api/v1`. It can be served by any static host or reverse proxy alongside remnantd; it has no server-side component and no credentials of its own.
+
+## Sign-in
+
+The user pastes a bearer token issued by `remnantd create-user` / `create-token`. The UI calls `GET /me`, shows the username and role, and keeps the token in memory (optionally `sessionStorage`). Actions the role cannot perform are hidden; the server enforces them regardless.
+
+Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming body reader, so the token stays in the `Authorization` header. On reconnect, send the last seen event ID as `Last-Event-ID`.
 
 ## Pages
 
-### 1. Research dashboard — `/research`
+### 1. Dashboard — `/`
 
-Cards: active runs, targets, hypotheses awaiting review, validated findings, worker resource use and last run activity. Every number is queried from `research_*` tables; no illustrative counters in production.
+Cards: active runs, targets, hypotheses awaiting triage, validated findings, pending approvals, recent activity. Every number comes from the API; no placeholder counters.
 
-### 2. Projects — `/research/projects`
+### 2. Projects — `/projects`
 
-Project columns: name, target count, active runs, configured LLM profile, last activity, status. Project drawer contains description, LLM profile selector and immutable policy summary:
+Columns: name, target count, active runs, model profile, updated, status. The project drawer shows description, model profile selector and the policy:
 
-- Source checkout: read-only.
-- Repository host allowlist: administrator-configured.
-- Dynamic testing: local lab only; disabled by default.
-- Network from worker: disabled.
+- Source access: read-only (fixed).
+- Worker network: none (fixed).
+- Dynamic testing: `disabled` (default) or `local_lab_only`. Switching to `local_lab_only` shows a confirmation explaining that it allows approved local experiments.
 
-### 3. Targets — `/research/projects/{id}/targets`
+### 3. Targets — `/projects/{id}/targets`
 
-Target form supports an allow-listed Git repository URL or a server-side local snapshot key. It does not accept a raw absolute filesystem path. Before save, backend resolves the repository, pins a commit SHA, calculates a tree digest and stores the snapshot under an application-managed directory. Display the canonical URL, branch/ref, commit SHA, tree digest and source status.
+Form fields: kind, display name, snapshot key, primary language; for `git_repository`, the https URL and ref. The form never accepts a filesystem path. Show revision, tree digest and status; a `pending` Git target explains that it awaits pinning.
 
-### 4. Knowledge base — `/research/knowledge`
+### 4. Knowledge base — `/patterns`
 
-Search by CVE/advisory, CWE, vulnerability class, root-cause phrase and language. Pattern details show: original source, patch reference, failure preconditions, lifecycle phase, affected invariant, code signatures, counter-signatures, version and review status.
+Search by text, vulnerability class and language. Detail: source reference, root cause, preconditions, lifecycle points, code signatures, counter-signatures, patch semantics, version, review status, author and reviewer. Reviewers get Review / Validate / Reject; Validate is disabled until a validated hypothesis derives from the pattern, and hidden for the pattern's author.
 
-### 5. Run wizard — `/research/runs/new`
+### 5. New run — `/runs/new`
 
-Only source-only analysis is available in MVP. Fields: project, one or more pinned targets, selected root-cause patterns, LLM profile, worker count (1–2 default, max 4), wall-time budget, token budget. The final page shows the exact source commits and read-only/no-network policy before submission.
+Fields: project, 1–10 ready targets, patterns, model profile (defaults to the project's), workers (1–4, default 2), wall time (60–3600 s, default 900), output-token budget (4 000–2 000 000, default 200 000). The confirmation step lists every target with its revision and states the read-only/no-network policy.
 
-### 6. Run details — `/research/runs/{id}`
+### 6. Run detail — `/runs/{id}`
 
-Tabs: Overview, Coverage, Hypotheses, Evidence, Experiments, Activity, Artifacts. Display stage progress and append-only activity from `/runs/{id}/events` SSE. A run cannot silently expand its target set or switch to network-enabled operation.
+Tabs: Overview (status, pinned targets and revisions, scope hash, hypothesis counts, token usage), Hypotheses, Evidence, Experiments (`GET /runs/{id}/experiments`), Activity (live SSE), Artifacts (download through `GET /runs/{id}/artifacts/{artifactId}`). A run can never change its targets or policy after creation.
 
-### 7. Hypothesis review — `/research/hypotheses/{id}`
+When the run is `review_required`, show **Finalize report**; it is disabled while lab approvals are pending. While a run is waiting or in an automatic stage, show **Pause**; a paused run shows **Resume** and its resume stage. Show `attempts` when a run was recovered after a crash.
 
-Show claim, class/CWE (if supported), affected symbols, preconditions, expected observation, supporting evidence, counter-evidence, target commit and triage confidence. Actions: accept for further analysis, reject, mark duplicate. Dynamic validation is a distinct action and opens an approval summary; it never starts immediately on click.
+### 7. Hypothesis — `/hypotheses/{id}`
 
-### 8. Lab approval — approval drawer
+Show claim, class/CWE, affected symbols, preconditions, expected observation, evidence with file/line and revision, counter-evidence and triage confidence. Show the Skeptic's verdict next to the triage priority, and facts and unknowns as separate lists. Reviewer actions: Accept, Reject, Duplicate, with a note; on a `validation_pending` hypothesis with a finished lab experiment, Validated or Not reproducible. Researcher action on an accepted hypothesis: Request lab validation, which opens the approval request form (lab operation, limits, summary); it never starts anything.
 
-Display exact target + commit SHA, test harness digest, expected test behavior, CPU/memory/time ceilings, network `none`, file mounts, output paths and expiry. Require explicit decision. Any mismatch in commit or policy hash invalidates approval.
+### 8. Approvals — `/approvals`
 
-### 9. Findings and reports — `/research/findings`, `/research/reports`
+List pending approvals. The drawer shows the full `scope` object (target, revision, run scope hash, limits, network `none`), the summary, requester and expiry. Reviewers who are not the requester can Approve or Deny with a note. A 409 response means the approval went stale; show why and offer to request a new one.
 
-Separate candidate hypotheses from validated findings. Reports include evidence IDs, file/line references, commit SHA, analyzer versions, test commands (lab-only), reproduction status, counter-evidence, limitations and remediation notes. Export Markdown and JSON; PDF can be added later using the existing report subsystem.
+### 9. Findings and reports — `/findings`
 
-### 10. Models — existing LLM profile settings
+Separate candidate hypotheses from validated findings. Exports (Markdown/JSON) include evidence IDs, file/line references, revisions, analyzer versions, lab commands, reproduction status, counter-evidence, limitations and remediation notes.
 
-REMNANT links to the existing ARTEX model profile page. The research UI sees only `id`, name, provider format, model and masked key hint/`has_api_key`. Never return API key material from `/api/research/*`. Do not duplicate provider credentials in a REMNANT-specific table.
+### 10. Model profiles — `/settings/models` (admin)
+
+List profiles with provider, model, effort and key hint. Create form takes the API key once; it is never displayed again.
