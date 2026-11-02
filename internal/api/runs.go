@@ -171,6 +171,35 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": string(research.RunCancelled)})
 }
 
+func (s *Server) pauseRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.PauseRun(r.Context(), id, principal(r).Username); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": string(research.RunPaused)})
+}
+
+func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ResumeRun(r.Context(), id, principal(r).Username); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	run, err := s.store.GetRun(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, run)
+}
+
 func (s *Server) finalizeRun(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

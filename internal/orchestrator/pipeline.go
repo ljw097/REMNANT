@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,14 +24,30 @@ import (
 // must stay well inside HTTP timeouts).
 const maxCallTokens = 16000
 
-// research runs the automatic source pipeline of a queued run.
+// research runs the automatic source pipeline of a queued run. A run that
+// was paused or interrupted resumes at runs.resume_stage: collecting always
+// runs again (the snapshots are re-verified), stages before the resume stage
+// are skipped, and work recorded inside the resume stage is not repeated.
 func (j *job) research(parent context.Context) (err error) {
 	scope, err := j.o.store.WorkScope(parent, j.runID)
 	if err != nil {
 		return err
 	}
+	// wall_seconds limits time spent working, so paused time is not counted.
 	wall := time.Duration(scope.Limits.WallSeconds) * time.Second
-	ctx, cancel := context.WithTimeoutCause(parent, wall, errWallTime)
+	remaining := wall - time.Duration(scope.Run.ActiveMs)*time.Millisecond
+	if remaining <= 0 {
+		return fmt.Errorf("%w: %s of work already used", errWallTime, wall)
+	}
+	started := time.Now()
+	defer func() {
+		bg, done := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		defer done()
+		if aerr := j.o.store.AddActiveTime(bg, j.runID, time.Since(started)); aerr != nil {
+			j.log.Error("record active time", "err", aerr)
+		}
+	}()
+	ctx, cancel := context.WithTimeoutCause(parent, remaining, errWallTime)
 	defer cancel()
 	defer func() {
 		if err != nil && errors.Is(context.Cause(ctx), errWallTime) && !errors.Is(err, errWallTime) {
@@ -38,46 +55,48 @@ func (j *job) research(parent context.Context) (err error) {
 		}
 	}()
 
-	if err := j.advance(ctx, research.RunCollecting, "Verifying pinned targets and loading patterns"); err != nil {
-		return err
+	resumeAt := research.RunStatus(scope.Run.ResumeStage)
+	if resumeAt != "" {
+		j.event(ctx, "run.resumed", fmt.Sprintf("Resuming at %s (attempt %d)", resumeAt, scope.Run.Attempts+1),
+			map[string]any{"resume_stage": resumeAt, "attempts": scope.Run.Attempts})
 	}
-	if err := j.collect(ctx, scope); err != nil {
-		return err
+	stages := []struct {
+		status  research.RunStatus
+		message string
+		run     func(context.Context) error
+	}{
+		{research.RunCollecting, "Verifying pinned targets and loading patterns", func(ctx context.Context) error { return j.collect(ctx, scope) }},
+		{research.RunIndexing, "Indexing source snapshots", func(ctx context.Context) error {
+			for _, t := range scope.Targets {
+				if err := j.index(ctx, t); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
+		{research.RunSurfaceMapping, "Matching patterns to source regions", func(ctx context.Context) error { return j.mapSurface(ctx, scope) }},
+		{research.RunHypothesisGeneration, "Generating hypotheses", func(ctx context.Context) error { return j.generate(ctx, scope) }},
+		{research.RunStaticValidation, "Running static analyzers", func(ctx context.Context) error { return j.static(ctx, scope) }},
 	}
-
-	if err := j.advance(ctx, research.RunIndexing, "Indexing source snapshots"); err != nil {
-		return err
-	}
-	for _, t := range scope.Targets {
-		if err := j.index(ctx, t); err != nil {
+	for _, st := range stages {
+		if err := j.advance(ctx, st.status, st.message); err != nil {
+			return err
+		}
+		if st.status != research.RunCollecting && stageBefore(st.status, resumeAt) {
+			j.event(ctx, "stage.skipped", fmt.Sprintf("%s already completed before the run was interrupted", st.status), nil)
+			continue
+		}
+		if err := st.run(ctx); err != nil {
 			return err
 		}
 	}
-
-	if err := j.advance(ctx, research.RunSurfaceMapping, "Matching patterns to source regions"); err != nil {
-		return err
-	}
-	cands, err := j.mapSurface(ctx, scope)
-	if err != nil {
-		return err
-	}
-
-	if err := j.advance(ctx, research.RunHypothesisGeneration,
-		fmt.Sprintf("Generating hypotheses from %d candidate regions", len(cands))); err != nil {
-		return err
-	}
-	if err := j.generate(ctx, scope, cands); err != nil {
-		return err
-	}
-
-	if err := j.advance(ctx, research.RunStaticValidation, "Running static analyzers"); err != nil {
-		return err
-	}
-	if err := j.static(ctx, scope); err != nil {
-		return err
-	}
-
 	return j.advance(ctx, research.RunReviewRequired, "Automatic analysis finished; hypotheses await review")
+}
+
+// stageBefore reports whether stage a comes before stage b in a source run.
+func stageBefore(a, b research.RunStatus) bool {
+	ia, ib := slices.Index(research.SourceStages, a), slices.Index(research.SourceStages, b)
+	return ia >= 0 && ib >= 0 && ia < ib
 }
 
 func (j *job) snapshotDir(t store.WorkTarget) (string, error) {
@@ -180,7 +199,9 @@ func (j *job) index(ctx context.Context, t store.WorkTarget) error {
 
 // mapSurface scores every source region against every pattern, keeps the
 // best few per pattern and target, and records each as run-level evidence.
-func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) ([]candidate, error) {
+// Recording is idempotent, so the stage can be repeated after an
+// interruption.
+func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 	type compiled struct {
 		p        store.Pattern
 		sigs     []signature
@@ -194,14 +215,14 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) ([]candidat
 	}
 	if len(patterns) == 0 {
 		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", nil)
-		return nil, nil
+		return nil
 	}
 
 	var perPattern [][]candidate
 	for _, t := range scope.Targets {
 		dir, err := j.snapshotDir(t)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		tops := make([]topK, len(patterns))
 		for i := range tops {
@@ -229,7 +250,7 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) ([]candidat
 			return nil
 		})
 		if err != nil {
-			return nil, stageErr(ctx, err)
+			return stageErr(ctx, err)
 		}
 		for _, top := range tops {
 			perPattern = append(perPattern, top.items)
@@ -243,21 +264,20 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) ([]candidat
 		if len(c.Countered) > 0 {
 			summary += fmt.Sprintf("; also matches counter-signature(s) %s", strings.Join(c.Countered, ", "))
 		}
-		id, err := j.o.store.InsertEvidence(ctx, j.runID, store.EvidenceInput{
+		key := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%d|%d", c.TargetID, c.Pattern.ID, c.Chunk.Path, c.Chunk.Start, c.Chunk.End)))
+		if _, err := j.o.store.InsertCandidate(ctx, j.runID, store.EvidenceInput{
 			TargetID: c.TargetID, Kind: "source_location", FilePath: c.Chunk.Path,
 			LineStart: c.Chunk.Start, LineEnd: c.Chunk.End, Symbol: c.Chunk.Symbol, Revision: c.Revision,
 			ContentSHA256: c.SHA256, Summary: summary, Excerpt: c.Excerpt,
-			Metadata: map[string]any{"pattern_id": c.Pattern.ID, "score": c.Score, "matched": c.Matched,
-				"countered": c.Countered, "language": c.Chunk.Language},
-		})
-		if err != nil {
-			return nil, err
+			Metadata: map[string]any{"candidate_key": hex.EncodeToString(key[:]), "pattern_id": c.Pattern.ID,
+				"score": c.Score, "matched": c.Matched, "countered": c.Countered, "language": c.Chunk.Language},
+		}); err != nil {
+			return err
 		}
-		c.evidenceID = id
 	}
 	j.event(ctx, "stage.mapped", fmt.Sprintf("%d candidate region(s) selected from %d pattern(s)", len(cands), len(patterns)),
 		map[string]any{"candidates": len(cands)})
-	return cands, nil
+	return nil
 }
 
 // agent is a model client bound to one role.
@@ -328,12 +348,82 @@ func (s *genStats) add(f func(*genStats)) {
 	f(s)
 }
 
-// generate runs Researcher then Skeptic for each candidate, MaxWorkers at a
-// time. Bad model output and refusals skip a candidate; the run fails only if
-// every model call errored.
-func (j *job) generate(ctx context.Context, scope store.WorkScope, cands []candidate) error {
-	if len(cands) == 0 {
-		return nil
+// workItem is a candidate region to examine, or a drafted hypothesis whose
+// Skeptic step did not run before an interruption.
+type workItem struct {
+	c     candidate
+	draft *store.HypothesisDetail
+}
+
+// pendingWork rebuilds the generation queue from the database, so a resumed
+// run continues where it stopped: candidates without an outcome, and draft
+// hypotheses that were never challenged.
+func (j *job) pendingWork(ctx context.Context, scope store.WorkScope) ([]workItem, error) {
+	stored, err := j.o.store.ListCandidates(ctx, j.runID)
+	if err != nil {
+		return nil, err
+	}
+	patterns := map[int64]store.Pattern{}
+	for _, p := range scope.Patterns {
+		patterns[p.ID] = p
+	}
+	byID := map[int64]candidate{}
+	var items []workItem
+	for _, sc := range stored {
+		p, ok := patterns[sc.Meta.PatternID]
+		if !ok || sc.LineStart == nil || sc.LineEnd == nil {
+			continue
+		}
+		c := candidate{TargetID: sc.TargetID, Revision: sc.Revision, Pattern: p,
+			Chunk: sourceindex.Chunk{Path: sc.FilePath, Language: sc.Meta.Language, Symbol: sc.Symbol,
+				Start: int(*sc.LineStart), End: int(*sc.LineEnd)},
+			Score: sc.Meta.Score, Matched: sc.Meta.Matched, Countered: sc.Meta.Countered,
+			Excerpt: sc.Excerpt, SHA256: sc.ContentSHA256, evidenceID: sc.ID}
+		byID[sc.ID] = c
+		if sc.Outcome == "" {
+			items = append(items, workItem{c: c})
+		}
+	}
+	hs, err := j.o.store.ListHypotheses(ctx, j.runID)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hs {
+		if h.Status != string(research.HypothesisDraft) {
+			continue
+		}
+		d, err := j.o.store.GetHypothesis(ctx, h.ID)
+		if err != nil {
+			return nil, err
+		}
+		found := false
+		for _, ev := range d.Evidence {
+			var m struct {
+				CopiedFrom int64 `json:"copied_from"`
+			}
+			if json.Unmarshal(ev.Metadata, &m) == nil {
+				if c, ok := byID[m.CopiedFrom]; ok {
+					items = append(items, workItem{c: c, draft: &d})
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			j.toTriage(ctx, h.ID)
+		}
+	}
+	return items, nil
+}
+
+// generate runs Researcher then Skeptic for each pending item, MaxWorkers at
+// a time. Bad model output and refusals skip a candidate; the run fails only
+// if every model call errored. The token budget counts what earlier attempts
+// of the run already spent.
+func (j *job) generate(ctx context.Context, scope store.WorkScope) error {
+	items, err := j.pendingWork(ctx, scope)
+	if err != nil || len(items) == 0 {
+		return err
 	}
 	clients := map[int64]llm.Client{}
 	researcher, err := j.agentFor(ctx, roleResearcher, scope.Run.LLMProfileID, clients)
@@ -352,23 +442,23 @@ func (j *job) generate(ctx context.Context, scope store.WorkScope, cands []candi
 		j.event(ctx, "stage.notice", "Skeptic is disabled in agent_profiles; hypotheses go to triage unchallenged", nil)
 	}
 
-	b := newBudget(int64(scope.Limits.MaxTokens))
+	b := newBudget(max(0, int64(scope.Limits.MaxTokens)-scope.Run.OutputTokens))
 	var stats genStats
-	work := make(chan candidate)
+	work := make(chan workItem)
 	var wg sync.WaitGroup
 	for range scope.Limits.MaxWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for c := range work {
-				j.investigate(ctx, researcher, skeptic, b, c, &stats)
+			for it := range work {
+				j.investigate(ctx, researcher, skeptic, b, it, &stats)
 			}
 		}()
 	}
 feed:
-	for _, c := range cands {
+	for _, it := range items {
 		select {
-		case work <- c:
+		case work <- it:
 		case <-ctx.Done():
 			break feed
 		}
@@ -391,7 +481,16 @@ feed:
 	return nil
 }
 
-func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *budget, c candidate, stats *genStats) {
+// mark records a candidate's outcome so a resumed run does not ask again.
+// Transient failures are not marked and are retried on resume.
+func (j *job) mark(ctx context.Context, c candidate, outcome string) {
+	if err := j.o.store.MarkCandidate(ctx, c.evidenceID, outcome); err != nil && ctx.Err() == nil {
+		j.log.Error("mark candidate", "evidence", c.evidenceID, "err", err)
+	}
+}
+
+func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *budget, it workItem, stats *genStats) {
+	c := it.c
 	ev := evidenceView{c.evidenceID, c.Chunk.Path, c.Chunk.Start, c.Chunk.End, c.Chunk.Symbol, c.SHA256, c.Excerpt}
 	allowed := map[int64]evidenceView{ev.EvidenceID: ev}
 	env := envelope{
@@ -405,56 +504,85 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 			fmt.Sprintf("The region matched signature(s): %s.", strings.Join(c.Matched, ", ")),
 		},
 	}
-	raw, err := j.call(ctx, researcher, b, researcherSystem, env, researcherSchema)
-	if j.callFailed(ctx, err, c, "researcher", stats) {
-		return
-	}
-	out, err := parseResearcher(raw, allowed)
-	if err != nil {
-		stats.add(func(s *genStats) { s.invalid++ })
-		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
-			map[string]any{"evidence_id": c.evidenceID})
-		return
-	}
-	if !out.Found {
-		stats.add(func(s *genStats) { s.declined++ })
-		return
-	}
 
-	patternID := c.Pattern.ID
-	dedupe := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%s|%d", c.TargetID, patternID, c.Chunk.Path, c.Chunk.Symbol, c.Chunk.Start)))
-	hypID, err := j.o.store.InsertHypothesis(ctx, j.runID, store.HypothesisInput{
-		TargetID: c.TargetID, PatternID: &patternID, Title: out.Title, Claim: out.Claim,
-		VulnerabilityClass: out.VulnerabilityClass, CWEID: out.CWEID, Facts: out.Facts,
-		Preconditions: out.Preconditions, Unknowns: out.Unknowns, AffectedSymbols: out.AffectedSymbols,
-		ExpectedObservation: out.ExpectedObservation, CounterEvidence: out.CounterEvidenceToCheck,
-		TriageConfidence: out.TriageConfidence, DedupeKey: hex.EncodeToString(dedupe[:]),
-	}, out.SupportingEvidenceIDs)
-	switch {
-	case errors.Is(err, store.ErrDuplicate):
-		stats.add(func(s *genStats) { s.duplicate++ })
-		return
-	case err != nil:
-		stats.add(func(s *genStats) { s.invalid++ })
-		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
-		return
+	var hypID int64
+	var hypothesis map[string]any
+	var researcherConfidence string
+	if d := it.draft; d != nil {
+		hypID, researcherConfidence = d.ID, d.TriageConfidence
+		hypothesis = map[string]any{
+			"hypothesis_id": d.ID, "title": d.Title, "claim": d.Claim, "facts": d.Facts,
+			"preconditions": d.Preconditions, "unknowns": d.Unknowns, "affected_symbols": d.AffectedSymbols,
+			"expected_observation": d.ExpectedObservation, "counter_evidence_to_check": d.CounterEvidence,
+			"triage_confidence": d.TriageConfidence,
+		}
+	} else {
+		raw, err := j.call(ctx, researcher, b, researcherSystem, env, researcherSchema)
+		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
+			if kind == "refused" {
+				j.mark(ctx, c, "refused")
+			}
+			return
+		}
+		out, err := parseResearcher(raw, allowed)
+		if err != nil {
+			stats.add(func(s *genStats) { s.invalid++ })
+			j.mark(ctx, c, "invalid")
+			j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
+				map[string]any{"evidence_id": c.evidenceID})
+			return
+		}
+		if !out.Found {
+			stats.add(func(s *genStats) { s.declined++ })
+			j.mark(ctx, c, "declined")
+			return
+		}
+		patternID := c.Pattern.ID
+		dedupe := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%s|%d", c.TargetID, patternID, c.Chunk.Path, c.Chunk.Symbol, c.Chunk.Start)))
+		// InsertHypothesis also marks the candidate, in the same transaction.
+		hypID, err = j.o.store.InsertHypothesis(ctx, j.runID, store.HypothesisInput{
+			TargetID: c.TargetID, PatternID: &patternID, Title: out.Title, Claim: out.Claim,
+			VulnerabilityClass: out.VulnerabilityClass, CWEID: out.CWEID, Facts: out.Facts,
+			Preconditions: out.Preconditions, Unknowns: out.Unknowns, AffectedSymbols: out.AffectedSymbols,
+			ExpectedObservation: out.ExpectedObservation, CounterEvidence: out.CounterEvidenceToCheck,
+			TriageConfidence: out.TriageConfidence, DedupeKey: hex.EncodeToString(dedupe[:]),
+		}, out.SupportingEvidenceIDs)
+		switch {
+		case errors.Is(err, store.ErrDuplicate):
+			stats.add(func(s *genStats) { s.duplicate++ })
+			j.mark(ctx, c, "duplicate")
+			return
+		case err != nil:
+			if ctx.Err() == nil {
+				stats.add(func(s *genStats) { s.invalid++ })
+				j.mark(ctx, c, "invalid")
+				j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
+			}
+			return
+		}
+		stats.add(func(s *genStats) { s.created++ })
+		researcherConfidence = out.TriageConfidence
+		hypothesis = map[string]any{
+			"hypothesis_id": hypID, "title": out.Title, "claim": out.Claim, "facts": out.Facts,
+			"preconditions": out.Preconditions, "unknowns": out.Unknowns, "affected_symbols": out.AffectedSymbols,
+			"expected_observation": out.ExpectedObservation, "counter_evidence_to_check": out.CounterEvidenceToCheck,
+			"triage_confidence": out.TriageConfidence,
+		}
 	}
-	stats.add(func(s *genStats) { s.created++ })
 
 	if skeptic == nil {
 		j.toTriage(ctx, hypID)
 		return
 	}
 	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, hypID)
-	env.Hypothesis = map[string]any{
-		"hypothesis_id": hypID, "title": out.Title, "claim": out.Claim, "facts": out.Facts,
-		"preconditions": out.Preconditions, "unknowns": out.Unknowns, "affected_symbols": out.AffectedSymbols,
-		"expected_observation": out.ExpectedObservation, "counter_evidence_to_check": out.CounterEvidenceToCheck,
-		"triage_confidence": out.TriageConfidence,
-	}
+	env.Hypothesis = hypothesis
 	env.Instructions = []string{"Challenge this hypothesis using only the cited excerpt. Check counter_evidence_to_check first."}
-	raw, err = j.call(ctx, skeptic, b, skepticSystem, env, skepticSchema)
-	if j.callFailed(ctx, err, c, "skeptic", stats) {
+	raw, err := j.call(ctx, skeptic, b, skepticSystem, env, skepticSchema)
+	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
+	case "":
+	case "stopped", "budget":
+		return // stays a draft; challenged when the run resumes
+	default:
 		j.toTriage(ctx, hypID)
 		return
 	}
@@ -480,27 +608,29 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	}
 	counterEv = append(counterEv, store.EvidenceInput{TargetID: c.TargetID, Kind: "counter_evidence", Revision: c.Revision,
 		Summary: "Skeptic rationale (" + sk.Verdict + "): " + sk.Rationale, Metadata: map[string]any{"agent": roleSkeptic}})
-	conf := finalConfidence(out.TriageConfidence, sk.Verdict, sk.AdjustedConfidence)
+	conf := finalConfidence(researcherConfidence, sk.Verdict, sk.AdjustedConfidence)
 	if err := j.o.store.RecordSkeptic(ctx, j.runID, hypID, sk.Verdict, conf, counter, counterEv); err != nil && ctx.Err() == nil {
 		j.log.Error("record skeptic", "hypothesis", hypID, "err", err)
 	}
 }
 
-// callFailed handles a model call error and reports whether the caller
-// should stop working on the candidate.
-func (j *job) callFailed(ctx context.Context, err error, c candidate, role string, stats *genStats) bool {
+// callFailed classifies a model call error: "" (no error), "stopped" (the
+// run is stopping), "budget", "refused" or "error".
+func (j *job) callFailed(ctx context.Context, err error, c candidate, role string, stats *genStats) string {
 	var refusal *llm.RefusalError
 	switch {
 	case err == nil:
-		return false
+		return ""
 	case ctx.Err() != nil:
-		return true
+		return "stopped"
 	case errors.Is(err, errBudget):
 		stats.add(func(s *genStats) { s.budgetHit = true })
+		return "budget"
 	case errors.As(err, &refusal):
 		stats.add(func(s *genStats) { s.declined++ })
 		j.event(ctx, "agent.refused", fmt.Sprintf("Model declined the %s task for evidence %d (%s)", role, c.evidenceID, refusal.Category),
 			map[string]any{"evidence_id": c.evidenceID, "category": refusal.Category})
+		return "refused"
 	default:
 		stats.add(func(s *genStats) {
 			s.err++
@@ -510,8 +640,8 @@ func (j *job) callFailed(ctx context.Context, err error, c candidate, role strin
 		})
 		j.event(ctx, "agent.error", fmt.Sprintf("%s call for evidence %d failed: %v", role, c.evidenceID, err),
 			map[string]any{"evidence_id": c.evidenceID})
+		return "error"
 	}
-	return true
 }
 
 func (j *job) toTriage(ctx context.Context, hypID int64) {

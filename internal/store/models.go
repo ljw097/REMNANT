@@ -92,6 +92,10 @@ type Run struct {
 	ErrorSummary string          `db:"error_summary" json:"error_summary"`
 	InputTokens  int64           `db:"input_tokens" json:"input_tokens"`
 	OutputTokens int64           `db:"output_tokens" json:"output_tokens"`
+	ResumeStage  string          `db:"resume_stage" json:"resume_stage"`
+	ResumeStatus string          `db:"resume_status" json:"resume_status"`
+	Attempts     int32           `db:"attempts" json:"attempts"`
+	ActiveMs     int64           `db:"active_ms" json:"active_ms"`
 	QueuedAt     time.Time       `db:"queued_at" json:"queued_at"`
 	StartedAt    *time.Time      `db:"started_at" json:"started_at"`
 	CompletedAt  *time.Time      `db:"completed_at" json:"completed_at"`

@@ -2,7 +2,10 @@
 // machine, hypothesis triage and run limits.
 package research
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type RunStatus string
 
@@ -17,6 +20,7 @@ const (
 	RunValidationApproved   RunStatus = "validation_approved"
 	RunLabValidation        RunStatus = "lab_validation"
 	RunReportReady          RunStatus = "report_ready"
+	RunPaused               RunStatus = "paused"
 	RunCompleted            RunStatus = "completed"
 	RunCancelled            RunStatus = "cancelled"
 	RunFailed               RunStatus = "failed"
@@ -36,6 +40,37 @@ var forward = map[RunStatus][]RunStatus{
 	RunValidationApproved:   {RunLabValidation},
 	RunLabValidation:        {RunReviewRequired, RunReportReady},
 	RunReportReady:          {RunCompleted},
+	RunPaused:               nil, // see CanTransition
+}
+
+// SourceStages are the automatic stages of a source run, in order.
+var SourceStages = []RunStatus{RunCollecting, RunIndexing, RunSurfaceMapping, RunHypothesisGeneration, RunStaticValidation}
+
+// Automatic reports whether s is a stage an orchestrator works on while it
+// holds the run's lease.
+func (s RunStatus) Automatic() bool {
+	return s == RunLabValidation || slices.Contains(SourceStages, s)
+}
+
+// Pausable reports whether a run in s may be paused: while waiting to be
+// claimed or while being worked on.
+func (s RunStatus) Pausable() bool {
+	return s == RunQueued || s == RunValidationApproved || s == RunReportReady || s.Automatic()
+}
+
+// ResumePoint is where a run paused or interrupted in s continues: the
+// claimable status it returns to and, for source runs, the stage to
+// continue from (empty means from the beginning of that phase).
+func ResumePoint(s RunStatus) (status, stage RunStatus) {
+	switch {
+	case slices.Contains(SourceStages, s):
+		return RunQueued, s
+	case s == RunLabValidation:
+		return RunValidationApproved, ""
+	case s.Pausable():
+		return s, ""
+	}
+	return "", ""
 }
 
 func (s RunStatus) Terminal() bool {
@@ -52,12 +87,25 @@ func (s RunStatus) Valid() bool {
 }
 
 // CanTransition reports whether a run may move from one status to another.
+// Besides the forward stages: any non-terminal run may end cancelled,
+// failed or timed out; a pausable run may be paused; a paused run resumes to
+// a claimable status; and an interrupted automatic stage is requeued to its
+// resume point.
 func CanTransition(from, to RunStatus) bool {
 	if from.Terminal() || !to.Valid() {
 		return false
 	}
-	if to == RunCancelled || to == RunFailed || to == RunTimedOut {
+	switch {
+	case to == RunCancelled || to == RunFailed || to == RunTimedOut:
 		return true
+	case to == RunPaused:
+		return from.Pausable()
+	case from == RunPaused:
+		return to == RunQueued || to == RunValidationApproved || to == RunReportReady
+	case from.Automatic():
+		if back, _ := ResumePoint(from); to == back {
+			return true
+		}
 	}
 	for _, next := range forward[from] {
 		if next == to {

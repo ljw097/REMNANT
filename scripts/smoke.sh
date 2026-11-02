@@ -57,7 +57,7 @@ check() { # name expected actual
 
 $SP/remnantd migrate 2>/dev/null; check "migrate" 0 $?
 $SP/remnantd migrate 2>/dev/null; check "migrate idempotent" 0 $?
-check "schema_migrations" 2 "$($PSQL -c 'select count(*) from remnant.schema_migrations')"
+check "schema_migrations" "$(ls internal/store/migrations/*.sql | wc -l)" "$($PSQL -c 'select count(*) from remnant.schema_migrations')"
 
 ADMIN=$($SP/remnantd create-user -username admin -role admin 2>/dev/null)
 RES=$($SP/remnantd create-user -username rita -role researcher 2>/dev/null)
@@ -197,6 +197,18 @@ LAST=$(grep '^id:' <<<"$EV" | tail -1 | cut -d' ' -f2)
 EV2=$(timeout 5 curl -sN -H "Authorization: Bearer $RES" -H "Last-Event-ID: $LAST" $B/runs/$RUN/events)
 check "sse resume skips seen" 0 "$(grep -c '^id:' <<<"$EV2")"
 
+check "pause completed run" 409 "$(req $RES POST /runs/$RUN/pause)"
+check "pausable run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"pattern_ids\":[$PAT]}")"
+RUN3=$(j "['id']")
+check "pause" 202 "$(req $RES POST /runs/$RUN3/pause)"
+check "paused" paused "$(wait_status $RUN3 paused 5)"
+check "pause twice" 409 "$(req $RES POST /runs/$RUN3/pause)"
+sleep 3   # an orchestrator poll passes; a paused run is not claimed
+check "still paused" paused "$($PSQL -c "select status from remnant.runs where id=$RUN3")"
+check "resume" 202 "$(req $RES POST /runs/$RUN3/resume)"
+check "resumed run finishes" review_required "$(wait_status $RUN3 review_required)"
+check "resume twice" 409 "$(req $RES POST /runs/$RUN3/resume)"
+
 check "second run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"
 RUN2=$(j "['id']")
 check "cancel" 202 "$(req $RES POST /runs/$RUN2/cancel)"
@@ -205,6 +217,19 @@ check "cancel twice" 409 "$(req $RES POST /runs/$RUN2/cancel)"
 check "run 404" 404 "$(req $RES GET /runs/99999)"
 
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
+
+# Crash recovery: kill remnantd while a run is in hypothesis_generation,
+# restart it, and let the reaper requeue the run once its 30 s lease expires.
+curl -s -X POST 'localhost:58081/delay?s=4' >/dev/null
+check "crash run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"pattern_ids\":[$PAT]}")"
+RUN4=$(j "['id']")
+check "crash run generating" hypothesis_generation "$(wait_status $RUN4 hypothesis_generation 15)"
+kill -9 $PID; wait $PID 2>/dev/null
+curl -s -X POST 'localhost:58081/delay?s=0' >/dev/null
+$SP/remnantd serve 2>>$SP/serve.log & PID=$!
+check "crash run recovered" review_required "$(wait_status $RUN4 review_required 60)"
+check "recovery recorded" "1 hypothesis_generation" "$($PSQL -c "select attempts || ' ' || (select payload->>'resume_stage' from remnant.events where run_id=$RUN4 and event_type='run.resumed' limit 1) from remnant.runs where id=$RUN4")"
+check "no duplicate candidates" 1 "$($PSQL -c "select count(*) from remnant.evidence where run_id=$RUN4 and hypothesis_id is null and metadata ? 'candidate_key'")"
 echo "---- $pass passed, $fail failed"
 [ $fail -eq 0 ] || grep '"level":"ERROR"' $SP/serve.log
 [ $fail -eq 0 ]

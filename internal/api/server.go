@@ -47,6 +47,8 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger) http.Handler {
 	api.HandleFunc("POST /api/v1/runs/{id}/cancel", s.requireRole(s.cancelRun, auth.RoleResearcher))
 	api.HandleFunc("GET /api/v1/runs/{id}/events", s.runEvents)
 	api.HandleFunc("GET /api/v1/runs/{id}/hypotheses", s.listHypotheses)
+	api.HandleFunc("POST /api/v1/runs/{id}/pause", s.requireRole(s.pauseRun, auth.RoleResearcher))
+	api.HandleFunc("POST /api/v1/runs/{id}/resume", s.requireRole(s.resumeRun, auth.RoleResearcher))
 	api.HandleFunc("POST /api/v1/runs/{id}/finalize", s.requireRole(s.finalizeRun, auth.RoleResearcher, auth.RoleReviewer))
 	api.HandleFunc("GET /api/v1/runs/{id}/experiments", s.listExperiments)
 	api.HandleFunc("GET /api/v1/runs/{id}/artifacts", s.listArtifacts)

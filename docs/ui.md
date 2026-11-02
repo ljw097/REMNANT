@@ -38,7 +38,7 @@ Fields: project, 1–10 ready targets, patterns, model profile (defaults to the 
 
 Tabs: Overview (status, pinned targets and revisions, scope hash, hypothesis counts, token usage), Hypotheses, Evidence, Experiments (`GET /runs/{id}/experiments`), Activity (live SSE), Artifacts (download through `GET /runs/{id}/artifacts/{artifactId}`). A run can never change its targets or policy after creation.
 
-When the run is `review_required`, show **Finalize report**; it is disabled while lab approvals are pending.
+When the run is `review_required`, show **Finalize report**; it is disabled while lab approvals are pending. While a run is waiting or in an automatic stage, show **Pause**; a paused run shows **Resume** and its resume stage. Show `attempts` when a run was recovered after a crash.
 
 ### 7. Hypothesis — `/hypotheses/{id}`
 

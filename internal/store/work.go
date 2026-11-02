@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -58,22 +59,247 @@ func (s *Store) ReleaseLease(ctx context.Context, id int64, owner string) error 
 	return err
 }
 
-// ReapExpiredLeases fails runs left in an automatic stage whose lease expired
-// (the orchestrator holding them died). Resuming mid-stage is not attempted.
-func (s *Store) ReapExpiredLeases(ctx context.Context) ([]int64, error) {
-	rows, err := s.pool.Query(ctx, `
-		WITH reaped AS (
-			UPDATE runs SET status = 'failed', error_summary = 'orchestrator lease expired',
-			                completed_at = now(), lease_owner = '', lease_expires_at = NULL
+// MaxAttempts is how many times a run is recovered after its orchestrator
+// died before it is failed instead.
+const MaxAttempts = 3
+
+// ReapExpiredLeases recovers runs left in an automatic stage whose lease
+// expired (the orchestrator holding them died): each goes back to its resume
+// point, or fails once it has been recovered MaxAttempts times.
+func (s *Store) ReapExpiredLeases(ctx context.Context) (requeued, failed []int64, err error) {
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		type stale struct {
+			ID       int64              `db:"id"`
+			Status   research.RunStatus `db:"status"`
+			Attempts int32              `db:"attempts"`
+		}
+		runs, err := collect[stale](tx.Query(ctx, `
+			SELECT id, status, attempts FROM runs
 			WHERE status = ANY($1) AND (lease_expires_at IS NULL OR lease_expires_at < now())
-			RETURNING id)
-		INSERT INTO events(run_id, event_type, stage, message)
-		SELECT id, 'run.status', 'failed', 'Orchestrator lease expired; run failed' FROM reaped
-		RETURNING run_id`, leasedStatuses)
+			FOR UPDATE SKIP LOCKED`, leasedStatuses))
+		if err != nil {
+			return err
+		}
+		for _, r := range runs {
+			if r.Attempts >= MaxAttempts {
+				summary := fmt.Sprintf("orchestrator lease expired %d times", r.Attempts+1)
+				if _, err := tx.Exec(ctx, `UPDATE runs SET error_summary = $2, lease_owner = '', lease_expires_at = NULL WHERE id = $1`, r.ID, summary); err != nil {
+					return err
+				}
+				if err := transitionRun(ctx, tx, r.ID, r.Status, research.RunFailed, summary); err != nil {
+					return err
+				}
+				failed = append(failed, r.ID)
+				continue
+			}
+			if err := requeue(ctx, tx, r.ID, r.Status, "orchestrator lease expired", true); err != nil {
+				return err
+			}
+			requeued = append(requeued, r.ID)
+		}
+		return nil
+	})
+	return requeued, failed, err
+}
+
+// RequeueRun returns a run interrupted in an automatic stage to its resume
+// point and releases its lease. countAttempt is false for orderly shutdowns,
+// which are not the run's fault.
+func (s *Store) RequeueRun(ctx context.Context, id int64, from research.RunStatus, reason string, countAttempt bool) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return requeue(ctx, tx, id, from, reason, countAttempt)
+	})
+}
+
+func requeue(ctx context.Context, tx pgx.Tx, id int64, from research.RunStatus, reason string, countAttempt bool) error {
+	back, stage := research.ResumePoint(from)
+	if !from.Automatic() || back == "" {
+		return fmt.Errorf("%w: a %s run cannot be requeued", ErrConflict, from)
+	}
+	inc := 0
+	if countAttempt {
+		inc = 1
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE runs SET attempts = attempts + $2, lease_owner = '', lease_expires_at = NULL WHERE id = $1`, id, inc); err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("%s; resuming", reason)
+	if stage != "" {
+		msg = fmt.Sprintf("%s; will resume at %s", reason, stage)
+	}
+	return transitionRun(ctx, tx, id, from, back, msg)
+}
+
+// PauseRun pauses a run that is waiting or being worked on. An orchestrator
+// working it stops at its next heartbeat; work already recorded is kept.
+func (s *Store) PauseRun(ctx context.Context, id int64, by string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var status research.RunStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
+			return mapErr(err)
+		}
+		if !status.Pausable() {
+			return fmt.Errorf("%w: a %s run cannot be paused", ErrConflict, status)
+		}
+		return transitionRun(ctx, tx, id, status, research.RunPaused, "Paused by "+by)
+	})
+}
+
+// ResumeRun puts a paused run back where it can be claimed.
+func (s *Store) ResumeRun(ctx context.Context, id int64, by string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var status, back research.RunStatus
+		if err := tx.QueryRow(ctx, `SELECT status, resume_status FROM runs WHERE id = $1 FOR UPDATE`, id).Scan(&status, &back); err != nil {
+			return mapErr(err)
+		}
+		if status != research.RunPaused {
+			return fmt.Errorf("%w: run is %s, not paused", ErrConflict, status)
+		}
+		return transitionRun(ctx, tx, id, research.RunPaused, back, "Resumed by "+by)
+	})
+}
+
+// AddActiveTime adds time spent working a run's source stages.
+func (s *Store) AddActiveTime(ctx context.Context, id int64, d time.Duration) error {
+	_, err := s.pool.Exec(ctx, `UPDATE runs SET active_ms = active_ms + $2 WHERE id = $1`, id, d.Milliseconds())
+	return err
+}
+
+// CancelStaleExperiments marks experiments of a run still "running" as
+// cancelled. It is called when a run is claimed, so they belong to a worker
+// that is gone. An interrupted lab experiment consumes its approval; its
+// hypothesis returns to accepted so a new approval can be requested.
+func (s *Store) CancelStaleExperiments(ctx context.Context, runID int64) (int, error) {
+	var n int
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		ids, err := collect[struct {
+			ID           int64  `db:"id"`
+			HypothesisID *int64 `db:"hypothesis_id"`
+			ApprovalID   *int64 `db:"approval_id"`
+		}](tx.Query(ctx, `
+			UPDATE experiments SET status = 'cancelled', completed_at = now(),
+			       result_summary = 'interrupted: the worker running it is gone'
+			WHERE run_id = $1 AND status IN ('queued','running')
+			RETURNING id, hypothesis_id, approval_id`, runID))
+		if err != nil {
+			return err
+		}
+		n = len(ids)
+		for _, e := range ids {
+			if e.ApprovalID != nil && e.HypothesisID != nil {
+				if _, err := tx.Exec(ctx, `
+					UPDATE hypotheses SET status = 'accepted', updated_at = now()
+					WHERE id = $1 AND status = 'validation_pending'`, *e.HypothesisID); err != nil {
+					return err
+				}
+			}
+			if err := appendEvent(ctx, tx, runID, "experiment.interrupted", "",
+				fmt.Sprintf("Experiment %d was interrupted and marked cancelled", e.ID), map[string]any{"experiment_id": e.ID}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return n, err
+}
+
+// FinishedStaticOps returns "<target>|<operation>" for static experiments of
+// the run that finished, so a resumed run does not repeat them.
+func (s *Store) FinishedStaticOps(ctx context.Context, runID int64) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT target_id || '|' || operation FROM experiments
+		WHERE run_id = $1 AND approval_id IS NULL AND target_id IS NOT NULL
+		  AND status IN ('passed','finding','failed','resource_limited')`, runID)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[int64])
+	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	done := map[string]bool{}
+	for _, k := range keys {
+		done[k] = true
+	}
+	return done, err
+}
+
+// Candidate is a source region selected during surface mapping, recorded as
+// run-level evidence. Outcome is empty until the region has been examined.
+type Candidate struct {
+	Evidence
+	Key     string
+	Outcome string
+	Meta    struct {
+		PatternID int64    `json:"pattern_id"`
+		Score     int      `json:"score"`
+		Matched   []string `json:"matched"`
+		Countered []string `json:"countered"`
+		Language  string   `json:"language"`
+	}
+}
+
+// InsertCandidate records a candidate region once per run (keyed by
+// metadata.candidate_key) and returns its evidence ID either way.
+func (s *Store) InsertCandidate(ctx context.Context, runID int64, e EvidenceInput) (int64, error) {
+	key, _ := e.Metadata["candidate_key"].(string)
+	if key == "" {
+		return 0, fmt.Errorf("%w: candidate without candidate_key", ErrInvalid)
+	}
+	if e.Metadata == nil {
+		e.Metadata = map[string]any{}
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO evidence(run_id, target_id, evidence_kind, file_path, line_start, line_end,
+		                     symbol, revision, content_sha256, summary, excerpt, metadata)
+		VALUES ($1, $2, $3, $4, NULLIF($5, 0), NULLIF($6, 0), $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (run_id, (metadata->>'candidate_key'))
+		    WHERE hypothesis_id IS NULL AND (metadata->>'candidate_key') IS NOT NULL
+		DO NOTHING`,
+		runID, e.TargetID, e.Kind, e.FilePath, e.LineStart, e.LineEnd,
+		e.Symbol, e.Revision, e.ContentSHA256, e.Summary, e.Excerpt, e.Metadata); err != nil {
+		return 0, mapErr(err)
+	}
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT id FROM evidence
+		WHERE run_id = $1 AND hypothesis_id IS NULL AND metadata->>'candidate_key' = $2`, runID, key).Scan(&id)
+	return id, mapErr(err)
+}
+
+// ListCandidates returns the run's candidate regions in selection order.
+func (s *Store) ListCandidates(ctx context.Context, runID int64) ([]Candidate, error) {
+	ev, err := collect[Evidence](s.pool.Query(ctx, `
+		SELECT id, hypothesis_id, target_id, evidence_kind, source_uri, file_path, line_start, line_end,
+		       symbol, revision, content_sha256, summary, excerpt, metadata, created_at
+		FROM evidence
+		WHERE run_id = $1 AND hypothesis_id IS NULL AND (metadata->>'candidate_key') IS NOT NULL
+		ORDER BY id`, runID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Candidate, 0, len(ev))
+	for _, e := range ev {
+		c := Candidate{Evidence: e}
+		var m struct {
+			Key     string `json:"candidate_key"`
+			Outcome string `json:"outcome"`
+		}
+		if err := json.Unmarshal(e.Metadata, &m); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(e.Metadata, &c.Meta); err != nil {
+			return nil, err
+		}
+		c.Key, c.Outcome = m.Key, m.Outcome
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// MarkCandidate records the outcome of examining a candidate region.
+func (s *Store) MarkCandidate(ctx context.Context, evidenceID int64, outcome string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE evidence SET metadata = metadata || jsonb_build_object('outcome', $2::text) WHERE id = $1`, evidenceID, outcome)
+	return err
 }
 
 // FailRun ends a run in to (failed or timed_out) with a summary.
@@ -248,6 +474,11 @@ func (s *Store) InsertHypothesis(ctx context.Context, runID int64, h HypothesisI
 			       line_start, line_end, symbol, revision, content_sha256, summary, excerpt,
 			       metadata || jsonb_build_object('copied_from', id)
 			FROM evidence WHERE id = ANY($2)`, id, evidenceIDs); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE evidence SET metadata = metadata || jsonb_build_object('outcome', 'hypothesis')
+			WHERE id = ANY($1) AND (metadata->>'candidate_key') IS NOT NULL`, evidenceIDs); err != nil {
 			return err
 		}
 		return appendEvent(ctx, tx, runID, "hypothesis.created", string(research.RunHypothesisGeneration),

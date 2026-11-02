@@ -173,9 +173,16 @@ type fakeModel struct {
 	mu      sync.Mutex
 	calls   map[string]int
 	inputs  []string
-	block   chan struct{} // if set, calls wait until ctx is done
+	block   chan struct{} // if set, call number blockAt (default 1) is closed on and waits until ctx is done
+	blockAt int
 	failAll bool
 	output  int64 // reported output tokens per call; default 300
+}
+
+func (f *fakeModel) count(role string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[role]
 }
 
 func (f *fakeModel) CompleteJSON(ctx context.Context, req llm.Request) (llm.Response, error) {
@@ -185,8 +192,10 @@ func (f *fakeModel) CompleteJSON(ctx context.Context, req llm.Request) (llm.Resp
 	}
 	f.calls[req.AgentKey]++
 	f.inputs = append(f.inputs, req.Input)
-	block := f.block
-	f.block = nil
+	var block chan struct{}
+	if f.block != nil && len(f.inputs) == max(f.blockAt, 1) {
+		block, f.block = f.block, nil
+	}
 	f.mu.Unlock()
 	if block != nil {
 		close(block)
@@ -446,19 +455,40 @@ func TestBudgetStopsGeneration(t *testing.T) {
 	}
 }
 
-func TestReaperFailsAbandonedRuns(t *testing.T) {
+func TestReaperRequeuesThenFails(t *testing.T) {
 	e := setup(t)
 	runID := e.newRun(200000)
-	if _, err := e.db.Exec(e.ctx, `UPDATE remnant.runs SET status = 'indexing', lease_owner = 'dead',
-		lease_expires_at = now() - interval '1 minute' WHERE id = $1`, runID); err != nil {
-		t.Fatal(err)
+	expire := func(attempts int) {
+		if _, err := e.db.Exec(e.ctx, `UPDATE remnant.runs SET status = 'indexing', lease_owner = 'dead', attempts = $2,
+			lease_expires_at = now() - interval '1 minute' WHERE id = $1`, runID, attempts); err != nil {
+			t.Fatal(err)
+		}
 	}
-	ids, err := e.st.ReapExpiredLeases(e.ctx)
+	expire(0)
+	requeued, failed, err := e.st.ReapExpiredLeases(e.ctx)
 	must(t, err)
-	if len(ids) != 1 || ids[0] != runID {
-		t.Fatalf("reaped %v", ids)
+	if len(requeued) != 1 || len(failed) != 0 {
+		t.Fatalf("requeued %v failed %v", requeued, failed)
 	}
-	if s, summary := e.status(runID); s != research.RunFailed || summary != "orchestrator lease expired" {
+	if n := e.count(`SELECT count(*) FROM remnant.runs WHERE id = $1 AND status = 'queued' AND resume_stage = 'indexing'
+		AND attempts = 1 AND lease_owner = ''`, runID); n != 1 {
+		t.Fatal("run not requeued at its resume point")
+	}
+
+	// The recovered run completes, skipping nothing it had not done.
+	e.runOnce(e.orchestrator(&fakeModel{}, nil))
+	if s, summary := e.status(runID); s != research.RunReviewRequired {
+		t.Fatalf("after recovery: %s (%s)", s, summary)
+	}
+
+	runID = e.newRun(200000)
+	expire(store.MaxAttempts)
+	_, failed, err = e.st.ReapExpiredLeases(e.ctx)
+	must(t, err)
+	if len(failed) != 1 {
+		t.Fatalf("failed %v", failed)
+	}
+	if s, summary := e.status(runID); s != research.RunFailed || !strings.Contains(summary, "lease expired") {
 		t.Fatalf("status %s (%s)", s, summary)
 	}
 }
@@ -498,11 +528,16 @@ func must(t *testing.T, err error) {
 	}
 }
 
-func TestShutdownMarksRunInterrupted(t *testing.T) {
+// An orderly shutdown in the middle of the Skeptic step requeues the run;
+// the next orchestrator challenges the draft without asking the Researcher
+// again, and examines the region it had not reached.
+func TestShutdownRequeuesAndResumes(t *testing.T) {
 	e := setup(t)
 	started := make(chan struct{})
-	o := e.orchestrator(&fakeModel{block: started}, nil)
-	runID := e.newRun(200000)
+	// One worker: call 1 is the Researcher on parse_header, call 2 its Skeptic.
+	model := &fakeModel{block: started, blockAt: 2}
+	o := e.orchestrator(model, nil)
+	runID := e.newRunWorkers(200000, 1)
 
 	ctx, stop := context.WithCancel(e.ctx)
 	done := make(chan struct{})
@@ -518,8 +553,161 @@ func TestShutdownMarksRunInterrupted(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after shutdown")
 	}
-	s, summary := e.status(runID)
-	if s != research.RunFailed || !strings.Contains(summary, "interrupted") {
-		t.Fatalf("status %s (%s), want failed/interrupted", s, summary)
+	if n := e.count(`SELECT count(*) FROM remnant.runs WHERE id = $1 AND status = 'queued'
+		AND resume_stage = 'hypothesis_generation' AND attempts = 0 AND error_summary = '' AND active_ms > 0`, runID); n != 1 {
+		s, summary := e.status(runID)
+		t.Fatalf("after shutdown: %s (%s), want requeued at hypothesis_generation", s, summary)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.hypotheses WHERE run_id = $1 AND status = 'draft'`, runID); n != 1 {
+		t.Fatal("the drafted hypothesis was lost")
+	}
+
+	e.runOnce(e.orchestrator(model, nil))
+	if s, summary := e.status(runID); s != research.RunReviewRequired {
+		t.Fatalf("after resume: %s (%s)", s, summary)
+	}
+	if r, k := model.count(roleResearcher), model.count(roleSkeptic); r != 2 || k != 2 {
+		t.Errorf("researcher %d, skeptic %d calls; want 2 and 2 (no repeated researcher call)", r, k)
+	}
+	hs, _ := e.st.ListHypotheses(e.ctx, runID)
+	if len(hs) != 1 || hs[0].Status != "triage" || hs[0].SkepticVerdict != "weakens" {
+		t.Fatalf("hypotheses = %+v", hs)
+	}
+	for _, stage := range []string{"indexing", "surface_mapping"} {
+		if n := e.count(`SELECT count(*) FROM remnant.events WHERE run_id = $1 AND event_type = 'stage.skipped'
+			AND message LIKE $2`, runID, stage+" already completed%"); n != 1 {
+			t.Errorf("%s was not skipped on resume", stage)
+		}
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.evidence WHERE run_id = $1 AND hypothesis_id IS NULL
+		AND metadata ? 'candidate_key'`, runID); n != 2 {
+		t.Errorf("%d candidate rows, want 2 (no duplicates)", n)
+	}
+}
+
+func TestPauseAndResume(t *testing.T) {
+	e := setup(t)
+	started := make(chan struct{})
+	model := &fakeModel{block: started}
+	o := e.orchestrator(model, nil)
+	o.opts.LeaseTTL = 900 * time.Millisecond
+	runID := e.newRunWorkers(200000, 1)
+
+	done := make(chan struct{})
+	go func() { defer close(done); e.runOnce(o) }()
+	<-started
+	must(t, e.st.PauseRun(e.ctx, runID, "alice"))
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("orchestrator did not stop after pause")
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.runs WHERE id = $1 AND status = 'paused'
+		AND resume_status = 'queued' AND resume_stage = 'hypothesis_generation' AND lease_owner = ''`, runID); n != 1 {
+		s, summary := e.status(runID)
+		t.Fatalf("after pause: %s (%s)", s, summary)
+	}
+	if ok, _ := o.RunOnce(e.ctx); ok {
+		t.Fatal("a paused run was claimed")
+	}
+	if err := e.st.PauseRun(e.ctx, runID, "alice"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("pausing twice: %v", err)
+	}
+
+	must(t, e.st.ResumeRun(e.ctx, runID, "alice"))
+	e.runOnce(o)
+	if s, summary := e.status(runID); s != research.RunReviewRequired {
+		t.Fatalf("after resume: %s (%s)", s, summary)
+	}
+	// The blocked call was not recorded, so parse_header is asked again;
+	// copy_name is asked once.
+	if r := model.count(roleResearcher); r != 3 {
+		t.Errorf("researcher calls = %d, want 3", r)
+	}
+	if err := e.st.ResumeRun(e.ctx, runID, "alice"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("resuming a run that is not paused: %v", err)
+	}
+}
+
+func TestPausedTimeDoesNotCountAgainstWallTime(t *testing.T) {
+	e := setup(t)
+	runID := e.newRun(200000)
+	if _, err := e.db.Exec(e.ctx, `UPDATE remnant.runs SET active_ms = 120000 WHERE id = $1`, runID); err != nil {
+		t.Fatal(err)
+	}
+	e.runOnce(e.orchestrator(&fakeModel{}, nil))
+	if s, _ := e.status(runID); s != research.RunTimedOut {
+		t.Fatalf("status %s, want timed_out once active time reaches wall_seconds", s)
+	}
+}
+
+// blockingWorker blocks lab operations until cancelled.
+type blockingWorker struct {
+	fakeWorker
+	started chan struct{}
+}
+
+func (w *blockingWorker) Execute(ctx context.Context, req worker.Request, p func(worker.Progress)) (worker.Result, error) {
+	if !strings.HasPrefix(req.Operation, "lab.") {
+		return w.fakeWorker.Execute(ctx, req, p)
+	}
+	close(w.started)
+	<-ctx.Done()
+	return worker.Result{}, ctx.Err()
+}
+
+func TestPauseDuringLabHandsHypothesisBack(t *testing.T) {
+	e := setup(t)
+	wk := &blockingWorker{started: make(chan struct{})}
+	o := e.orchestrator(&fakeModel{}, wk)
+	o.opts.LeaseTTL = 900 * time.Millisecond
+	runID := e.newRun(200000)
+	e.runOnce(o)
+	hs, _ := e.st.ListHypotheses(e.ctx, runID)
+	_, err := e.st.TriageHypothesis(e.ctx, hs[0].ID, research.DecisionAccepted, "", e.bob)
+	must(t, err)
+	appr, err := e.st.RequestLabApproval(e.ctx, hs[0].ID, e.alice, "lab.asan_test", policy.DefaultLabLimits(), "asan", time.Hour)
+	must(t, err)
+	_, err = e.st.DecideApproval(e.ctx, appr.ID, e.bob, true, "")
+	must(t, err)
+
+	done := make(chan struct{})
+	go func() { defer close(done); e.runOnce(o) }()
+	<-wk.started
+	must(t, e.st.PauseRun(e.ctx, runID, "alice"))
+	<-done
+	if n := e.count(`SELECT count(*) FROM remnant.runs WHERE id = $1 AND status = 'paused' AND resume_status = 'validation_approved'`, runID); n != 1 {
+		s, _ := e.status(runID)
+		t.Fatalf("status %s", s)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE approval_id = $1 AND status = 'cancelled'`, appr.ID); n != 1 {
+		t.Error("interrupted lab experiment not recorded as cancelled")
+	}
+	h, _ := e.st.GetHypothesis(e.ctx, hs[0].ID)
+	if h.Status != "accepted" {
+		t.Errorf("hypothesis %s, want accepted", h.Status)
+	}
+
+	must(t, e.st.ResumeRun(e.ctx, runID, "alice"))
+	e.runOnce(o) // the approval is spent: nothing to run
+	if s, _ := e.status(runID); s != research.RunReviewRequired {
+		t.Fatalf("after resume: %s", s)
+	}
+}
+
+func TestStaleRunningExperimentsAreCancelledOnClaim(t *testing.T) {
+	e := setup(t)
+	runID := e.newRun(200000)
+	if _, err := e.db.Exec(e.ctx, `INSERT INTO remnant.experiments(run_id, target_id, operation, status, workspace_revision)
+		VALUES ($1, $2, 'static.patterns', 'running', 'x')`, runID, e.targetID); err != nil {
+		t.Fatal(err)
+	}
+	e.runOnce(e.orchestrator(&fakeModel{}, &fakeWorker{}))
+	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE run_id = $1 AND status = 'cancelled'`, runID); n != 1 {
+		t.Error("stale experiment not cancelled")
+	}
+	// The static operation still ran once in this attempt.
+	if n := e.count(`SELECT count(*) FROM remnant.experiments WHERE run_id = $1 AND status = 'passed'`, runID); n != 1 {
+		t.Error("static operation did not run")
 	}
 }

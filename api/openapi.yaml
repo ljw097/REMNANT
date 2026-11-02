@@ -200,6 +200,25 @@ paths:
       responses:
         '202': { description: Cancelled }
         '409': { description: Run already terminal, $ref: '#/components/responses/Error' }
+  /runs/{id}/pause:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Pause a waiting or running run (researcher)
+      description: |
+        Allowed while the run is queued, validation_approved, report_ready or in an automatic stage.
+        An orchestrator working it stops at its next heartbeat (≤ 10 s). Recorded work is kept;
+        an interrupted lab experiment is recorded as cancelled and spends its approval.
+      responses:
+        '202': { description: Paused }
+        '409': { description: The run cannot be paused in its current status, $ref: '#/components/responses/Error' }
+  /runs/{id}/resume:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Resume a paused run (researcher)
+      description: The run returns to resume_status and continues from resume_stage; completed stages are not repeated.
+      responses:
+        '202': { description: Resumed, content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } } }
+        '409': { description: The run is not paused, $ref: '#/components/responses/Error' }
   /runs/{id}/finalize:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
@@ -472,13 +491,13 @@ components:
         patch_semantics: { type: object }
     RunStatus:
       type: string
-      enum: [queued, collecting, indexing, surface_mapping, hypothesis_generation, static_validation, review_required, validation_approved, lab_validation, report_ready, completed, cancelled, failed, timed_out]
+      enum: [queued, collecting, indexing, surface_mapping, hypothesis_generation, static_validation, review_required, validation_approved, lab_validation, report_ready, paused, completed, cancelled, failed, timed_out]
     Limits:
       type: object
       properties:
         max_workers: { type: integer, minimum: 1, maximum: 4, default: 2 }
         wall_seconds: { type: integer, minimum: 60, maximum: 3600, default: 900 }
-        max_tokens: { type: integer, minimum: 4000, maximum: 2000000, default: 200000, description: Output-token budget (thinking included) across every model call of the run }
+        max_tokens: { type: integer, minimum: 4000, maximum: 2000000, default: 200000, description: Output-token budget (thinking included) across every model call of the run, including earlier attempts }
     CreateRun:
       type: object
       additionalProperties: false
@@ -504,6 +523,10 @@ components:
         error_summary: { type: string }
         input_tokens: { type: integer }
         output_tokens: { type: integer }
+        resume_stage: { type: string, description: Source stage the run continues from after a pause or interruption; empty when none }
+        resume_status: { type: string, description: Status a paused run returns to when resumed; empty unless paused }
+        attempts: { type: integer, description: Times the run was recovered after its orchestrator died (failed after 3) }
+        active_ms: { type: integer, description: Time spent in automatic source stages; wall_seconds applies to this }
         queued_at: { type: string, format: date-time }
         started_at: { type: [string, 'null'], format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }

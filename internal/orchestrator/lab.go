@@ -30,8 +30,15 @@ func (j *job) static(ctx context.Context, scope store.WorkScope) error {
 		j.event(ctx, "stage.skipped", "No worker runtime configured; static analyzers did not run", nil)
 		return nil
 	}
+	done, err := j.o.store.FinishedStaticOps(ctx, j.runID)
+	if err != nil {
+		return err
+	}
 	for _, t := range scope.Targets {
 		for _, op := range j.o.opts.StaticOperations {
+			if done[fmt.Sprintf("%d|%s", t.ID, op)] {
+				continue // finished before the run was interrupted
+			}
 			inputs := map[string]any{"language": t.PrimaryLanguage}
 			if _, err := j.runWorker(ctx, t.ID, t.Revision, op, inputs, nil, nil, staticLimits); err != nil {
 				return err
@@ -88,6 +95,14 @@ func (j *job) labExperiment(ctx context.Context, a store.Approval) error {
 	hypID, approvalID := a.HypothesisID, a.ID
 	status, err := j.runWorker(ctx, a.TargetID, a.TargetRevision, scope.Operation, inputs, &hypID, &approvalID, limits)
 	if err != nil {
+		if ctx.Err() != nil {
+			// Paused, cancelled or shut down mid-experiment: the approval is
+			// spent on the interrupted experiment; hand the hypothesis back
+			// so a new approval can be requested.
+			bg, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer done()
+			_ = j.o.store.SetHypothesisStatus(bg, a.HypothesisID, research.HypothesisValidationPending, research.HypothesisAccepted)
+		}
 		return err
 	}
 	if status == "not_run" {

@@ -76,6 +76,8 @@ When the approval is decided, remnantd recomputes the scope from current state. 
 queued → collecting → indexing → surface_mapping → hypothesis_generation → static_validation → review_required
 review_required → validation_approved → lab_validation → (review_required | report_ready)
 review_required → report_ready → completed
+queued | validation_approved | report_ready | automatic stage → paused → (its resume point)
+interrupted automatic stage → its resume point (queued for source stages, validation_approved for lab)
 any non-terminal → cancelled | failed | timed_out
 ```
 
@@ -140,10 +142,30 @@ Do not ask the model for a single opaque probability. Rank hypotheses by explain
 ### Claiming and liveness
 
 - Every poll (2 s) it claims the oldest run in `queued`, `validation_approved` or `report_ready` whose lease is free, with `FOR UPDATE SKIP LOCKED`, so several instances can share one database.
-- A claim is a 30 s lease (`runs.lease_owner`, `lease_expires_at`). A heartbeat renews it every 10 s and reads the run's status; a `cancelled` status or a lost lease stops the work within one heartbeat.
-- A run left in an automatic stage with an expired lease (its instance died) is failed by the reaper with `orchestrator lease expired`. Stages are not resumed.
-- On shutdown, runs in progress are failed with `interrupted: remnantd shut down …`.
-- A source run that exceeds `limits.wall_seconds` ends `timed_out`.
+- A claim is a 30 s lease (`runs.lease_owner`, `lease_expires_at`). A heartbeat renews it every 10 s and reads the run's status; a `cancelled` or `paused` status or a lost lease stops the work within one heartbeat.
+- When a run is claimed, experiments of it still marked `running` belong to a worker that is gone; they are marked `cancelled`.
+- A source run that exceeds `limits.wall_seconds` of *active* time (`runs.active_ms`; paused or queued time does not count) ends `timed_out`.
+
+### Pause, resume and recovery
+
+Progress is recorded as it happens, so a run can stop at any point and continue later without repeating work:
+
+| Recorded | Used on resume |
+|---|---|
+| `runs.resume_stage` — the source stage the run was in | stages before it are skipped (collecting always re-verifies the snapshots) |
+| candidate regions, unique per run (`metadata.candidate_key`) | surface mapping can be repeated without duplicates |
+| each candidate's outcome (`hypothesis`, `declined`, `refused`, `invalid`, `duplicate`) | only unexamined candidates go to the Researcher; transient errors and budget cut-offs are retried |
+| draft hypotheses | drafts never challenged go to the Skeptic without asking the Researcher again |
+| finished static experiments per target and operation | not run again |
+| `runs.output_tokens`, `runs.active_ms` | the token budget and wall time continue from what was spent |
+
+Three ways a run stops and resumes:
+
+- **Pause** (`POST /runs/{id}/pause`): the run becomes `paused` with `resume_status` set; `POST /runs/{id}/resume` returns it there.
+- **Shutdown** (SIGTERM): runs in an automatic stage are requeued at their resume point; the attempt is not counted.
+- **Crash** (the orchestrator died): the reaper requeues runs whose lease expired and increments `runs.attempts`; after 3 recoveries the run fails.
+
+An interrupted lab experiment is recorded as `cancelled` and spends its approval (one experiment per approval); the hypothesis returns to `accepted` so a new approval can be requested.
 
 ### Source pipeline (`queued` → `review_required`)
 

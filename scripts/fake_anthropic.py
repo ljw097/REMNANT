@@ -4,13 +4,17 @@
 It answers as the Hypothesis Researcher or the Skeptic by reading the task
 envelope remnantd sends, so the smoke test exercises the real SDK client,
 structured-output request and response handling without network access.
-GET /calls returns how many requests were served per role.
+GET /calls returns how many requests were served per role; POST /delay?s=N
+makes every later answer take N seconds (used to interrupt a run mid-stage).
 """
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 calls = {"researcher": 0, "skeptic": 0}
+delay = [0.0]
 
 
 def answer(system, envelope):
@@ -51,12 +55,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the client went away, e.g. remnantd killed by the crash test
 
     def do_GET(self):
         self.reply(200, calls)
 
     def do_POST(self):
+        url = urlparse(self.path)
+        if url.path == "/delay":
+            delay[0] = float(parse_qs(url.query)["s"][0])
+            return self.reply(200, {"delay": delay[0]})
+        time.sleep(delay[0])
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path != "/v1/messages" or not self.headers.get("Authorization", "").startswith("Bearer sk-ant-"):
             return self.reply(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}})
@@ -73,4 +85,4 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
-HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()

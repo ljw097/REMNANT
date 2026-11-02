@@ -19,6 +19,17 @@ func TestCanTransition(t *testing.T) {
 		{RunCompleted, RunCancelled, false},
 		{RunCancelled, RunQueued, false},
 		{RunQueued, "bogus", false},
+		{RunHypothesisGeneration, RunPaused, true},
+		{RunQueued, RunPaused, true},
+		{RunReviewRequired, RunPaused, false}, // nothing is running
+		{RunPaused, RunQueued, true},
+		{RunPaused, RunValidationApproved, true},
+		{RunPaused, RunCollecting, false},
+		{RunPaused, RunCancelled, true},
+		{RunIndexing, RunQueued, true}, // requeue after interruption
+		{RunLabValidation, RunValidationApproved, true},
+		{RunLabValidation, RunQueued, false},
+		{RunQueued, RunQueued, false},
 	}
 	for _, c := range cases {
 		if got := CanTransition(c.from, c.to); got != c.want {
@@ -67,6 +78,24 @@ func TestCanTriage(t *testing.T) {
 	for _, c := range cases {
 		if got := CanTriage(c.s, c.d); got != c.want {
 			t.Errorf("CanTriage(%s, %s) = %v, want %v", c.s, c.d, got, c.want)
+		}
+	}
+}
+
+func TestResumePoint(t *testing.T) {
+	cases := map[RunStatus][2]RunStatus{
+		RunQueued:             {RunQueued, ""},
+		RunIndexing:           {RunQueued, RunIndexing},
+		RunStaticValidation:   {RunQueued, RunStaticValidation},
+		RunLabValidation:      {RunValidationApproved, ""},
+		RunValidationApproved: {RunValidationApproved, ""},
+		RunReportReady:        {RunReportReady, ""},
+		RunReviewRequired:     {"", ""},
+		RunCompleted:          {"", ""},
+	}
+	for s, want := range cases {
+		if st, stage := ResumePoint(s); st != want[0] || stage != want[1] {
+			t.Errorf("ResumePoint(%s) = %s, %s; want %s, %s", s, st, stage, want[0], want[1])
 		}
 	}
 }

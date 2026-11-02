@@ -84,10 +84,12 @@ func (o *Orchestrator) Run(ctx context.Context) {
 	tick := time.NewTicker(o.opts.PollInterval)
 	defer tick.Stop()
 	for {
-		if ids, err := o.store.ReapExpiredLeases(ctx); err != nil && ctx.Err() == nil {
+		requeued, failed, err := o.store.ReapExpiredLeases(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
 			o.log.Error("reap expired leases", "err", err)
-		} else if len(ids) > 0 {
-			o.log.Warn("failed runs with expired leases", "runs", ids)
+		case len(requeued)+len(failed) > 0:
+			o.log.Warn("recovered runs whose orchestrator died", "requeued", requeued, "failed", failed)
 		}
 		o.fill(ctx, sem, &wg)
 		select {
@@ -138,6 +140,7 @@ func (o *Orchestrator) RunOnce(ctx context.Context) (bool, error) {
 
 var (
 	errCancelled = errors.New("run cancelled")
+	errPaused    = errors.New("run paused")
 	errLeaseLost = errors.New("run lease lost")
 	errWallTime  = errors.New("run wall time exceeded")
 )
@@ -166,6 +169,13 @@ func (o *Orchestrator) work(parent context.Context, runID int64, status research
 	}()
 
 	j.log.Info("working run", "status", status)
+	// Anything still "running" belongs to a worker that is gone.
+	if n, err := o.store.CancelStaleExperiments(ctx, runID); err != nil {
+		j.finish(ctx, err)
+		return
+	} else if n > 0 {
+		j.log.Warn("cancelled interrupted experiments", "count", n)
+	}
 	var err error
 	switch status {
 	case research.RunQueued:
@@ -181,7 +191,7 @@ func (o *Orchestrator) work(parent context.Context, runID int64, status research
 }
 
 // heartbeat renews the lease every third of its TTL and cancels the work if
-// the lease is lost or the run was cancelled.
+// the lease is lost or the run was cancelled or paused.
 func (j *job) heartbeat(ctx context.Context, cancel context.CancelCauseFunc) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -205,7 +215,10 @@ func (j *job) heartbeat(ctx context.Context, cancel context.CancelCauseFunc) (st
 				return
 			case err != nil:
 				j.log.Error("renew lease", "err", err) // retried next tick; the TTL leaves room
-			case status == research.RunCancelled:
+			case status == research.RunPaused:
+				cancel(errPaused)
+				return
+			case status.Terminal():
 				cancel(errCancelled)
 				return
 			}
@@ -214,29 +227,35 @@ func (j *job) heartbeat(ctx context.Context, cancel context.CancelCauseFunc) (st
 	return func() { close(done); wg.Wait() }
 }
 
-// finish records a stage error on the run. Cancellation and lost leases are
-// not errors of this job; the run's status already says what happened.
+// finish records how the job ended. Cancellation, pausing and lost leases
+// are not errors of this job: the run's status already says what happened.
+// A shutdown requeues the run at its resume point instead of failing it.
 func (j *job) finish(ctx context.Context, err error) {
 	if err == nil {
 		return
 	}
 	cause := context.Cause(ctx)
-	if errors.Is(cause, errCancelled) || errors.Is(cause, errLeaseLost) {
+	if errors.Is(cause, errCancelled) || errors.Is(cause, errPaused) || errors.Is(cause, errLeaseLost) {
 		j.log.Info("run stopped", "cause", cause)
 		return
 	}
 	bg, done := context.WithTimeout(context.Background(), 10*time.Second)
 	defer done()
-	if current, serr := j.o.store.RunStatus(bg, j.runID); serr == nil && current.Terminal() {
-		j.log.Info("run ended elsewhere", "status", current)
+	if current, serr := j.o.store.RunStatus(bg, j.runID); serr == nil && current != j.status {
+		j.log.Info("run changed elsewhere", "status", current)
+		return
+	}
+	if errors.Is(cause, context.Canceled) {
+		if j.status.Automatic() {
+			if rerr := j.o.store.RequeueRun(bg, j.runID, j.status, "remnantd shut down", false); rerr != nil {
+				j.log.Error("requeue run", "err", rerr)
+			}
+		}
 		return
 	}
 	to, summary := research.RunFailed, err.Error()
-	switch {
-	case errors.Is(err, errWallTime):
+	if errors.Is(err, errWallTime) {
 		to = research.RunTimedOut
-	case errors.Is(cause, context.Canceled):
-		summary = "interrupted: remnantd shut down while the run was in progress"
 	}
 	j.log.Warn("run did not complete", "status", j.status, "to", to, "err", err)
 	if ferr := j.o.store.FailRun(bg, j.runID, j.status, to, summary); ferr != nil {

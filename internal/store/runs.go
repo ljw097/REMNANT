@@ -12,7 +12,8 @@ import (
 )
 
 const runCols = `id, project_id, status, mode, limits, policy, scope_hash, llm_profile_id, started_by,
-	error_summary, input_tokens, output_tokens, queued_at, started_at, completed_at`
+	error_summary, input_tokens, output_tokens, resume_stage, resume_status, attempts, active_ms,
+	queued_at, started_at, completed_at`
 
 type RunInput struct {
 	ProjectID    int64
@@ -158,11 +159,32 @@ func (s *Store) TransitionRun(ctx context.Context, id int64, from, to research.R
 }
 
 func transitionRun(ctx context.Context, q querier, id int64, from, to research.RunStatus, message string) error {
+	// Resume bookkeeping travels with the status so the CHECK constraint
+	// "paused iff resume_status is set" holds after every statement.
+	resumeStatus := ""
+	var resumeStage *string // nil keeps the current value
+	clear := ""
+	switch back, stage := research.ResumePoint(from); {
+	case to == research.RunPaused:
+		resumeStatus = string(back)
+		if stage != "" {
+			resumeStage = (*string)(&stage)
+		}
+	case from.Automatic() && to == back:
+		if stage != "" {
+			resumeStage = (*string)(&stage)
+		}
+	case to == research.RunQueued || to.Automatic():
+	default:
+		resumeStage = &clear
+	}
 	tag, err := q.Exec(ctx, `
 		UPDATE runs SET status = $3,
-			started_at   = CASE WHEN $2 = 'queued' THEN now() ELSE started_at END,
-			completed_at = CASE WHEN $4 THEN now() ELSE completed_at END
-		WHERE id = $1 AND status = $2`, id, string(from), string(to), to.Terminal())
+			started_at    = CASE WHEN $2 = 'queued' AND started_at IS NULL THEN now() ELSE started_at END,
+			completed_at  = CASE WHEN $4 THEN now() ELSE completed_at END,
+			resume_status = $5,
+			resume_stage  = COALESCE($6, resume_stage)
+		WHERE id = $1 AND status = $2`, id, string(from), string(to), to.Terminal(), resumeStatus, resumeStage)
 	if err != nil {
 		return err
 	}

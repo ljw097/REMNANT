@@ -21,6 +21,7 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Worker protocol types and validation | implemented |
 | Anthropic model client (structured JSON output) | implemented |
 | Run orchestrator: indexing, pattern matching, Researcher/Skeptic agents, lab dispatch, reports | implemented |
+| Pause/resume and recovery after shutdown or crash, without repeating recorded work | implemented |
 | Git fetcher (pins `git_repository` targets) | **not yet**: they stay `pending` |
 | Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
@@ -56,7 +57,7 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"kind":"local_snapshot","display_nam
   localhost:8080/api/v1/projects/1/targets
 ```
 
-Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`POST /runs`, see `examples/create_run.json`). The orchestrator inside `remnantd serve` picks it up and drives it to `review_required`; follow it with `GET /runs/{id}/events`. After triage, `POST /runs/{id}/finalize` produces the report. See `api/openapi.yaml` for the rest.
+Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`POST /runs`, see `examples/create_run.json`). The orchestrator inside `remnantd serve` picks it up and drives it to `review_required`; follow it with `GET /runs/{id}/events`. Runs can be paused and resumed (`POST /runs/{id}/pause`, `/resume`); after a shutdown or crash they continue where they stopped. After triage, `POST /runs/{id}/finalize` produces the report. See `api/openapi.yaml` for the rest.
 
 ## Configuration
 
