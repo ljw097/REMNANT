@@ -5,4 +5,4 @@ package update
 // workflow. To rotate: generate a new key with remnant-release keygen, ship a
 // release that lists both keys (comma-separated) signed with the old key,
 // then switch the secret to the new key.
-const productionKey = "8qYPsCsnnR5TuOoY7ASWeu0+Txh48WBxA1qmXyZT5IM="
+const productionKey = "8qYPsCsnnR5TuOoY7ASWeu0+Txh48WBxA1qmXyZT5IM=" // ggignore: Ed25519 public key; public by design
