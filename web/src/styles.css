@@ -42,6 +42,7 @@
   --warn: #9a5800;
   --bad: #b42318;
   --info: #1d5fbf;
+  --todo: #6d4bd6;
   --muted: #626a7a;
 
   --code-bg: #f4f4f5;
@@ -105,6 +106,7 @@
   --warn: #e6a640;
   --bad: #f2756d;
   --info: #72a8ff;
+  --todo: #b79cff;
   --muted: #8e96a5;
 
   --code-bg: #161618;
@@ -370,8 +372,8 @@ table { font-variant-numeric: tabular-nums; }
   display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
   border-radius: 999px; border: 1px solid transparent; font-size: var(--fs-0); font-weight: 600; white-space: nowrap;
   --tone: var(--muted);
-  color: color-mix(in oklch, var(--tone) 80%, var(--ink));
-  background: color-mix(in oklch, var(--tone) 14%, var(--surface));
+  color: color-mix(in oklch, var(--tone) 82%, var(--ink));
+  background: color-mix(in oklch, var(--tone) 16%, var(--surface));
 }
 .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tone); flex: none; }
 .state[data-form="waiting"]::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--tone); }
@@ -383,6 +385,7 @@ table { font-variant-numeric: tabular-nums; }
 .state[data-tone="warn"] { --tone: var(--warn); }
 .state[data-tone="bad"] { --tone: var(--bad); }
 .state[data-tone="info"] { --tone: var(--info); }
+.state[data-tone="todo"] { --tone: var(--todo); }
 
 .prio { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-1); font-weight: 600; color: var(--ink-2); }
 .prio i { display: inline-block; width: 4px; height: 12px; border-radius: 1px; background: var(--rule-strong); }

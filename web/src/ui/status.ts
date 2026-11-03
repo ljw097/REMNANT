@@ -4,7 +4,7 @@
 import type { Key } from "../i18n";
 import type { Decision, Experiment, HypothesisStatus, Pattern, RunStatus, Target } from "../api/types";
 
-export type Tone = "muted" | "ok" | "warn" | "bad" | "info";
+export type Tone = "muted" | "ok" | "warn" | "bad" | "info" | "todo";
 export type Form = "solid" | "waiting" | "live" | "stopped";
 export interface StateLook {
   tone: Tone;
@@ -13,13 +13,13 @@ export interface StateLook {
 }
 
 const run: Record<RunStatus, [Tone, Form]> = {
-  queued: ["info", "waiting"],
+  queued: ["muted", "waiting"],
   collecting: ["info", "live"],
   indexing: ["info", "live"],
   surface_mapping: ["info", "live"],
   hypothesis_generation: ["info", "live"],
   static_validation: ["info", "live"],
-  review_required: ["info", "waiting"],
+  review_required: ["todo", "waiting"],
   validation_approved: ["info", "waiting"],
   lab_validation: ["info", "live"],
   report_ready: ["info", "waiting"],
@@ -32,7 +32,7 @@ const run: Record<RunStatus, [Tone, Form]> = {
 
 const hypothesis: Record<HypothesisStatus, [Tone, Form]> = {
   draft: ["muted", "waiting"],
-  triage: ["info", "waiting"],
+  triage: ["todo", "waiting"],
   accepted: ["info", "solid"],
   rejected: ["muted", "stopped"],
   validation_pending: ["warn", "waiting"],
@@ -50,9 +50,9 @@ const decision: Record<Decision, [Tone, Form]> = {
 };
 
 const experiment: Record<Experiment["status"], [Tone, Form]> = {
-  queued: ["info", "waiting"],
+  queued: ["muted", "waiting"],
   running: ["info", "live"],
-  passed: ["muted", "solid"],
+  passed: ["ok", "solid"],
   finding: ["bad", "solid"],
   failed: ["bad", "stopped"],
   resource_limited: ["warn", "stopped"],
@@ -60,14 +60,14 @@ const experiment: Record<Experiment["status"], [Tone, Form]> = {
 };
 
 const target: Record<Target["status"], [Tone, Form]> = {
-  pending: ["info", "waiting"],
+  pending: ["muted", "waiting"],
   ready: ["ok", "solid"],
   unavailable: ["bad", "stopped"],
   quarantined: ["warn", "stopped"],
 };
 
 const pattern: Record<Pattern["validation_status"], [Tone, Form]> = {
-  unreviewed: ["muted", "waiting"],
+  unreviewed: ["warn", "waiting"],
   reviewed: ["info", "solid"],
   validated: ["ok", "solid"],
   rejected: ["muted", "stopped"],
