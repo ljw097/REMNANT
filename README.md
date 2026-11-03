@@ -27,6 +27,23 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
 
+## Run locally (one command)
+
+To try REMNANT on your own machine, with Docker installed:
+
+```sh
+scripts/local.sh           # or: go build -o remnantd ./cmd/remnantd && ./remnantd local
+```
+
+`remnantd local` fills local defaults — a per-user data directory, a master
+key file, loopback-only listening, automatic updates off — and, when
+`REMNANT_DATABASE_URL` is not set, starts a PostgreSQL in Docker for you
+(container `remnant-db`, a persistent volume, port 5433). It then applies
+migrations, serves on `127.0.0.1:8080`, and opens the first-run setup page
+in your browser, where you pick the **personal** profile and set an
+administrator password. No server administration needed. Without Docker,
+set `REMNANT_DATABASE_URL` to any PostgreSQL and the same command uses it.
+
 ## Quick start
 
 Requirements: Go ≥ 1.25, Node.js ≥ 20.19 (to build the web UI) and PostgreSQL ≥ 14. The worker runtime additionally needs Linux with unprivileged user namespaces, bubblewrap (`bwrap`), and a systemd user session for cgroup limits; lab harnesses use the host's `/usr` toolchain (e.g. `cc` with sanitizers).
