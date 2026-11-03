@@ -55,7 +55,7 @@ describe("normalizePrefs", () => {
       "researcher",
       "en",
     );
-    expect(p.theme).toBe("system");
+    expect(p.theme).toBe("light"); // invalid theme falls back to the default (now light, ARTEX-style)
     expect(p.density).toBe("compact");
     expect(p.startPage).toBe("/");
     expect(p.dashboard[0]).toEqual({ id: "projects", visible: false });
