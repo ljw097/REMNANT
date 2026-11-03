@@ -3,7 +3,7 @@ import { get, onUnauthorized, post, put } from "./api/client";
 import type { AuthStatus, Branding, InstancePolicy, Presets, Principal, Role, Summary, VersionInfo } from "./api/types";
 import { detectLang, I18nProvider, type Lang } from "./i18n";
 import { navigate } from "./router";
-import { applyAppearance, defaultPrefs, normalizePrefs, type Prefs } from "./prefs";
+import { applyAppearance, defaultPrefs, normalizePrefs, storedTheme, type Prefs } from "./prefs";
 
 interface Session {
   me: Principal;
@@ -126,7 +126,7 @@ export function SessionProvider({
   const effectiveLang = ready ? ready.prefs.language : lang;
 
   useEffect(() => {
-    const p = ready ? ready.prefs : { ...defaultPrefs("researcher", lang), language: lang };
+    const p = ready ? ready.prefs : { ...defaultPrefs("researcher", lang), theme: storedTheme(), language: lang };
     applyAppearance(p, branding.accent);
     if (p.theme !== "system") return;
     const mq = matchMedia("(prefers-color-scheme: dark)");

@@ -69,11 +69,12 @@ export function CommandPalette() {
   // Load the searchable entities the first time the palette opens.
   useEffect(() => {
     if (!open) {
-      setQ("");
       setSel(0);
       return;
     }
+    // Keep the last query so reopening continues it; select it so typing replaces.
     inputRef.current?.focus();
+    inputRef.current?.select();
     if (loaded) return;
     setLoaded(true);
     void Promise.allSettled([
@@ -190,6 +191,10 @@ export function CommandPalette() {
               } else if (e.key === "Enter") {
                 e.preventDefault();
                 choose(results[sel]);
+              } else if (e.key === "Escape") {
+                // Close without the browser clearing the input first.
+                e.preventDefault();
+                setOpen(false);
               }
             }}
           />
