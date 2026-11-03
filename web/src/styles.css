@@ -26,9 +26,9 @@
   --active: #e9e9ec;
   --ink: #18181b;
   --ink-2: #52525b;
-  --ink-3: #8a8a93;
-  --rule: #ededee;
-  --rule-strong: #e0e0e2;
+  --ink-3: #6b6b74;
+  --rule: #e4e4e7;
+  --rule-strong: #d1d1d6;
   /* ARTEX: black primary button; neutral by default, brandable accent kept for links/focus. */
   --primary: #18181b;
   --primary-ink: #fafafa;
@@ -384,10 +384,14 @@ table { font-variant-numeric: tabular-nums; }
 .state[data-tone="bad"] { --tone: var(--bad); }
 .state[data-tone="info"] { --tone: var(--info); }
 
-.prio { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-1); font-weight: 550; color: var(--ink-2); }
+.prio { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-1); font-weight: 600; color: var(--ink-2); }
 .prio i { display: inline-block; width: 4px; height: 12px; border-radius: 1px; background: var(--rule-strong); }
-.prio[data-level="medium"] i:nth-child(-n + 2), .prio[data-level="high"] i { background: var(--ink-2); }
+.prio[data-level="low"] { color: var(--ink-2); }
 .prio[data-level="low"] i:first-child { background: var(--ink-2); }
+.prio[data-level="medium"] { color: var(--warn); }
+.prio[data-level="medium"] i:nth-child(-n + 2) { background: var(--warn); }
+.prio[data-level="high"] { color: var(--bad); }
+.prio[data-level="high"] i { background: var(--bad); }
 
 /* ---------- Transit stage line (run progress) ---------- */
 
