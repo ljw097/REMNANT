@@ -77,6 +77,7 @@ type Pattern struct {
 	ReviewedBy         *int64          `db:"reviewed_by" json:"reviewed_by"`
 	ReviewedAt         *time.Time      `db:"reviewed_at" json:"reviewed_at"`
 	CreatedAt          time.Time       `db:"created_at" json:"created_at"`
+	SelfReviewed       bool            `db:"self_reviewed" json:"self_reviewed"`
 }
 
 type Run struct {
@@ -180,6 +181,7 @@ type Approval struct {
 	DecidedAt      *time.Time      `db:"decided_at" json:"decided_at"`
 	ExpiresAt      time.Time       `db:"expires_at" json:"expires_at"`
 	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
+	SelfApproved   bool            `db:"self_approved" json:"self_approved"`
 }
 
 type Artifact struct {

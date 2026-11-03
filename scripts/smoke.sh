@@ -216,6 +216,32 @@ check "cancelled" cancelled "$(wait_status $RUN2 cancelled 5)"
 check "cancel twice" 409 "$(req $RES POST /runs/$RUN2/cancel)"
 check "run 404" 404 "$(req $RES GET /runs/99999)"
 
+# Web UI, first-run setup and team/personal modes.
+U=http://127.0.0.1:58080
+check "ui index" 200 "$(curl -s -D $SP/hdr -o $SP/index.html -w '%{http_code}' $U/)"
+check "ui csp" 1 "$(grep -ci "^content-security-policy: default-src 'none'" $SP/hdr)"
+check "ui history fallback" 200 "$(curl -s -o /dev/null -w '%{http_code}' $U/runs/$RUN)"
+check "ui post rejected" 405 "$(curl -s -o /dev/null -w '%{http_code}' -X POST $U/)"
+check "unknown api path" 401 "$(curl -s -o /dev/null -w '%{http_code}' $B/nope)"
+check "setup not required" 200 "$(curl -s -o $SP/body -w '%{http_code}' $B/setup)"; check "setup flag" False "$(j "['required']")"
+check "setup after users" 409 "$(curl -s -o $SP/body -w '%{http_code}' -H 'Content-Type: application/json' -d '{"code":"AAAA-BBBB-CCCC","mode":"team","username":"mallory"}' $B/setup)"
+check "branding public" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/branding)"
+check "branding by researcher" 403 "$(req $RES PUT /branding '{"name":"x"}')"
+check "preferences" 200 "$(req $RES PUT /me/preferences '{"lang":"ko"}')"
+check "preferences read back" ko "$(req $RES GET /me/preferences >/dev/null; j "['lang']")"
+check "summary" 200 "$(req $RES GET /summary)"
+check "approvals list" 200 "$(req $REV GET '/approvals?decision=approved')"
+check "users list" 200 "$(req $RES GET /users)"; check "users listed" 3 "$(j ".__len__()")"
+check "instance mode" team "$(req $RES GET /instance >/dev/null; j "['mode']")"
+check "mode by researcher" 403 "$(req $RES PUT /instance '{"mode":"personal"}')"
+check "own pattern" 201 "$(req $ADMIN POST /patterns '{"title":"Own pattern","vulnerability_class":"memory-safety","root_cause":"self review check","language":"c"}')"
+OWN=$(j "['id']")
+check "team self review" 403 "$(req $ADMIN POST /patterns/$OWN/review '{"status":"reviewed"}')"
+check "personal mode" 200 "$(req $ADMIN PUT /instance '{"mode":"personal"}')"
+check "personal self review" 200 "$(req $ADMIN POST /patterns/$OWN/review '{"status":"reviewed"}')"
+check "self review recorded" t "$($PSQL -c "select self_reviewed from remnant.patterns where id=$OWN")"
+check "back to team" 200 "$(req $ADMIN PUT /instance '{"mode":"team"}')"
+
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
 
 # Crash recovery: kill remnantd while a run is in hypothesis_generation,

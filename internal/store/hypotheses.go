@@ -79,7 +79,7 @@ func (s *Store) TriageHypothesis(ctx context.Context, id int64, d research.Triag
 }
 
 const approvalCols = `id, run_id, hypothesis_id, target_id, action_class, target_revision, scope, scope_hash,
-	request_summary, decision, requested_by, decided_by, reviewer_note, decided_at, expires_at, created_at`
+	request_summary, decision, requested_by, decided_by, reviewer_note, decided_at, expires_at, created_at, self_approved`
 
 // labContext is everything an approval scope is derived from, read under lock.
 type labContext struct {
@@ -192,8 +192,10 @@ func checkApprovalScope(ctx context.Context, tx pgx.Tx, a Approval) (labContext,
 var ErrStale = fmt.Errorf("%w: approval is stale", ErrConflict)
 
 // DecideApproval records an approve/deny decision. The decider must differ
-// from the requester, and the scope hash is recomputed from current state.
-func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, approve bool, note string) (Approval, error) {
+// from the requester unless allowSelf (personal mode), in which case the
+// approval is marked self_approved. The scope hash is recomputed from
+// current state.
+func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, approve bool, note string, allowSelf bool) (Approval, error) {
 	var stale bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		a, err := one[Approval](tx.Query(ctx, `SELECT `+approvalCols+` FROM approvals WHERE id = $1 FOR UPDATE`, approvalID))
@@ -203,7 +205,8 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, a
 		if a.Decision != "pending" {
 			return fmt.Errorf("%w: approval is already %s", ErrConflict, a.Decision)
 		}
-		if a.RequestedBy == decider {
+		self := a.RequestedBy == decider
+		if self && !allowSelf {
 			return fmt.Errorf("%w: the requester cannot decide their own approval", ErrForbidden)
 		}
 		c, fresh, err := checkApprovalScope(ctx, tx, a)
@@ -225,8 +228,9 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, a
 			hypStatus = research.HypothesisValidationPending
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE approvals SET decision = $2, decided_by = $3, reviewer_note = $4, decided_at = now() WHERE id = $1`,
-			a.ID, decision, decider, note); err != nil {
+			UPDATE approvals SET decision = $2, decided_by = $3, reviewer_note = $4, decided_at = now(), self_approved = $5
+			WHERE id = $1`,
+			a.ID, decision, decider, note, self); err != nil {
 			return mapErr(err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE hypotheses SET status = $2, updated_at = now() WHERE id = $1`, a.HypothesisID, string(hypStatus)); err != nil {
@@ -238,8 +242,12 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, a
 				return err
 			}
 		}
-		return appendEvent(ctx, tx, c.runID, "approval.decided", "", fmt.Sprintf("Lab approval %d %s", a.ID, decision),
-			map[string]any{"approval_id": a.ID, "decision": decision})
+		msg := fmt.Sprintf("Lab approval %d %s", a.ID, decision)
+		if self {
+			msg += " by its requester (personal mode)"
+		}
+		return appendEvent(ctx, tx, c.runID, "approval.decided", "", msg,
+			map[string]any{"approval_id": a.ID, "decision": decision, "self_approved": self})
 	})
 	if err != nil {
 		return Approval{}, err

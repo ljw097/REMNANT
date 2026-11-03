@@ -2,6 +2,7 @@
 //
 //	remnantd serve                                   run migrations, then serve the API
 //	remnantd migrate                                 apply pending migrations and exit
+//	remnantd setup -mode team|personal -username NAME  first-run setup without the web UI
 //	remnantd create-user  -username NAME -role ROLE  create a user and print a first token
 //	remnantd create-token -username NAME [-name N] [-ttl 720h]
 //	remnantd update [-check]                         install the latest signed release (or only report it)
@@ -32,6 +33,7 @@ import (
 	"github.com/ljw097/remnant/internal/sandbox"
 	"github.com/ljw097/remnant/internal/secrets"
 	"github.com/ljw097/remnant/internal/store"
+	webui "github.com/ljw097/remnant/web"
 )
 
 func main() {
@@ -68,9 +70,9 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths map[string]string) error {
 	switch cmd {
-	case "serve", "migrate", "create-user", "create-token", "update":
+	case "serve", "migrate", "setup", "create-user", "create-token", "update":
 	case "-h", "--help", "help":
-		fmt.Println("usage: remnantd [serve|migrate|create-user|create-token|update|version] [flags]")
+		fmt.Println("usage: remnantd [serve|migrate|setup|create-user|create-token|update|version] [flags]")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
@@ -104,12 +106,56 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths
 	switch cmd {
 	case "migrate":
 		return nil
+	case "setup":
+		return setupCommand(ctx, st, args)
 	case "create-user":
 		return createUser(ctx, st, args)
 	case "create-token":
 		return createToken(ctx, st, args)
 	}
+	if err := announceSetup(ctx, log, st, cfg); err != nil {
+		return err
+	}
 	return serve(ctx, log, st, cfg, paths)
+}
+
+// announceSetup prints a one-time setup code while the instance has no
+// users. Whoever completes setup in the web UI must have read the server's
+// log, so reaching the port first is not enough to claim the instance.
+func announceSetup(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config) error {
+	n, err := st.UserCount(ctx)
+	if err != nil || n > 0 {
+		return err
+	}
+	code, err := st.NewSetupCode(ctx, 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	log.Warn("first-run setup required", "url", "http://"+cfg.ListenAddr+"/", "setup_code", code, "expires_in", "24h")
+	fmt.Fprintf(os.Stderr, "\n  REMNANT first-run setup\n  Open http://%s/ and enter this setup code: %s\n  (or run: remnantd setup -mode team|personal -username NAME)\n\n", cfg.ListenAddr, code)
+	return nil
+}
+
+func setupCommand(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	mode := fs.String("mode", "", "team (two-person rules) or personal (one person may approve their own requests)")
+	username := fs.String("username", "", "first administrator")
+	name := fs.String("name", "", "instance name shown in the UI (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	u, token, err := st.Setup(ctx, store.SetupInput{Mode: *mode, Username: *username, TrustedLocal: true})
+	if err != nil {
+		return err
+	}
+	if *name != "" {
+		if err := st.SetSetting(ctx, "branding", map[string]string{"name": *name, "accent": ""}, u.ID); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "set up as %s; administrator %s. The token below is shown only once.\n", *mode, u.Username)
+	fmt.Println(token)
+	return nil
 }
 
 func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config, paths map[string]string) error {
@@ -124,7 +170,7 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           api.New(st, cfg, log, upd),
+		Handler:           api.New(st, cfg, log, upd, webui.Dist()),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,

@@ -1,0 +1,773 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T23:04:05+00:00",
+  "title": "Design System: REMNANT",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Case Blue",
+        "canonical": "oklch(43.8% 0.202 266)",
+        "tonalRamp": [
+          "oklch(15% 0.200 266)",
+          "oklch(25% 0.200 266)",
+          "oklch(38% 0.200 266)",
+          "oklch(50% 0.200 266)",
+          "oklch(62% 0.200 266)",
+          "oklch(74% 0.200 266)",
+          "oklch(86% 0.200 266)",
+          "oklch(95% 0.200 266)"
+        ],
+        "note": "Brandable: --accent-base is set from organization branding; #1f3fbf is the default. Dark theme uses color-mix(in oklch, var(--accent-base) 70%, white)."
+      },
+      "accent-ink": {
+        "role": "neutral",
+        "displayName": "Accent Ink",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(25% 0.000 90)",
+          "oklch(38% 0.000 90)",
+          "oklch(50% 0.000 90)",
+          "oklch(62% 0.000 90)",
+          "oklch(74% 0.000 90)",
+          "oklch(86% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Cool Paper",
+        "canonical": "oklch(97.6% 0.003 265)",
+        "tonalRamp": [
+          "oklch(15% 0.003 265)",
+          "oklch(25% 0.003 265)",
+          "oklch(38% 0.003 265)",
+          "oklch(50% 0.003 265)",
+          "oklch(62% 0.003 265)",
+          "oklch(74% 0.003 265)",
+          "oklch(86% 0.003 265)",
+          "oklch(95% 0.003 265)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Sheet White",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(25% 0.000 90)",
+          "oklch(38% 0.000 90)",
+          "oklch(50% 0.000 90)",
+          "oklch(62% 0.000 90)",
+          "oklch(74% 0.000 90)",
+          "oklch(86% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Ledger Grey",
+        "canonical": "oklch(95.5% 0.006 265)",
+        "tonalRamp": [
+          "oklch(15% 0.006 265)",
+          "oklch(25% 0.006 265)",
+          "oklch(38% 0.006 265)",
+          "oklch(50% 0.006 265)",
+          "oklch(62% 0.006 265)",
+          "oklch(74% 0.006 265)",
+          "oklch(86% 0.006 265)",
+          "oklch(95% 0.006 265)"
+        ]
+      },
+      "panel-hover": {
+        "role": "neutral",
+        "displayName": "Ledger Grey Pressed",
+        "canonical": "oklch(92.7% 0.009 265)",
+        "tonalRamp": [
+          "oklch(15% 0.009 265)",
+          "oklch(25% 0.009 265)",
+          "oklch(38% 0.009 265)",
+          "oklch(50% 0.009 265)",
+          "oklch(62% 0.009 265)",
+          "oklch(74% 0.009 265)",
+          "oklch(86% 0.009 265)",
+          "oklch(95% 0.009 265)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(20.4% 0.011 261)",
+        "tonalRamp": [
+          "oklch(15% 0.011 261)",
+          "oklch(25% 0.011 261)",
+          "oklch(38% 0.011 261)",
+          "oklch(50% 0.011 261)",
+          "oklch(62% 0.011 261)",
+          "oklch(74% 0.011 261)",
+          "oklch(86% 0.011 261)",
+          "oklch(95% 0.011 261)"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink 2",
+        "canonical": "oklch(42.3% 0.025 264)",
+        "tonalRamp": [
+          "oklch(15% 0.025 264)",
+          "oklch(25% 0.025 264)",
+          "oklch(38% 0.025 264)",
+          "oklch(50% 0.025 264)",
+          "oklch(62% 0.025 264)",
+          "oklch(74% 0.025 264)",
+          "oklch(86% 0.025 264)",
+          "oklch(95% 0.025 264)"
+        ]
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Ink 3",
+        "canonical": "oklch(52.3% 0.027 264)",
+        "tonalRamp": [
+          "oklch(15% 0.027 264)",
+          "oklch(25% 0.027 264)",
+          "oklch(38% 0.027 264)",
+          "oklch(50% 0.027 264)",
+          "oklch(62% 0.027 264)",
+          "oklch(74% 0.027 264)",
+          "oklch(86% 0.027 264)",
+          "oklch(95% 0.027 264)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(91.8% 0.009 265)",
+        "tonalRamp": [
+          "oklch(15% 0.009 265)",
+          "oklch(25% 0.009 265)",
+          "oklch(38% 0.009 265)",
+          "oklch(50% 0.009 265)",
+          "oklch(62% 0.009 265)",
+          "oklch(74% 0.009 265)",
+          "oklch(86% 0.009 265)",
+          "oklch(95% 0.009 265)"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Rule",
+        "canonical": "oklch(85.0% 0.014 262)",
+        "tonalRamp": [
+          "oklch(15% 0.014 262)",
+          "oklch(25% 0.014 262)",
+          "oklch(38% 0.014 262)",
+          "oklch(50% 0.014 262)",
+          "oklch(62% 0.014 262)",
+          "oklch(74% 0.014 262)",
+          "oklch(86% 0.014 262)",
+          "oklch(95% 0.014 262)"
+        ]
+      },
+      "ok": {
+        "role": "semantic",
+        "displayName": "Settled Green",
+        "canonical": "oklch(52.4% 0.136 150)",
+        "tonalRamp": [
+          "oklch(15% 0.136 150)",
+          "oklch(25% 0.136 150)",
+          "oklch(38% 0.136 150)",
+          "oklch(50% 0.136 150)",
+          "oklch(62% 0.136 150)",
+          "oklch(74% 0.136 150)",
+          "oklch(86% 0.136 150)",
+          "oklch(95% 0.136 150)"
+        ]
+      },
+      "warn": {
+        "role": "semantic",
+        "displayName": "Amber",
+        "canonical": "oklch(52.5% 0.120 63)",
+        "tonalRamp": [
+          "oklch(15% 0.120 63)",
+          "oklch(25% 0.120 63)",
+          "oklch(38% 0.120 63)",
+          "oklch(50% 0.120 63)",
+          "oklch(62% 0.120 63)",
+          "oklch(74% 0.120 63)",
+          "oklch(86% 0.120 63)",
+          "oklch(95% 0.120 63)"
+        ]
+      },
+      "bad": {
+        "role": "semantic",
+        "displayName": "Signal Red",
+        "canonical": "oklch(50.0% 0.182 30)",
+        "tonalRamp": [
+          "oklch(15% 0.182 30)",
+          "oklch(25% 0.182 30)",
+          "oklch(38% 0.182 30)",
+          "oklch(50% 0.182 30)",
+          "oklch(62% 0.182 30)",
+          "oklch(74% 0.182 30)",
+          "oklch(86% 0.182 30)",
+          "oklch(95% 0.182 30)"
+        ]
+      },
+      "info": {
+        "role": "semantic",
+        "displayName": "Progress Blue",
+        "canonical": "oklch(50.1% 0.165 259)",
+        "tonalRamp": [
+          "oklch(15% 0.165 259)",
+          "oklch(25% 0.165 259)",
+          "oklch(38% 0.165 259)",
+          "oklch(50% 0.165 259)",
+          "oklch(62% 0.165 259)",
+          "oklch(74% 0.165 259)",
+          "oklch(86% 0.165 259)",
+          "oklch(95% 0.165 259)"
+        ]
+      },
+      "muted": {
+        "role": "semantic",
+        "displayName": "Muted",
+        "canonical": "oklch(52.3% 0.027 264)",
+        "tonalRamp": [
+          "oklch(15% 0.027 264)",
+          "oklch(25% 0.027 264)",
+          "oklch(38% 0.027 264)",
+          "oklch(50% 0.027 264)",
+          "oklch(62% 0.027 264)",
+          "oklch(74% 0.027 264)",
+          "oklch(86% 0.027 264)",
+          "oklch(95% 0.027 264)"
+        ]
+      },
+      "code-bg": {
+        "role": "neutral",
+        "displayName": "Code Ground",
+        "canonical": "oklch(96.9% 0.005 258)",
+        "tonalRamp": [
+          "oklch(15% 0.005 258)",
+          "oklch(25% 0.005 258)",
+          "oklch(38% 0.005 258)",
+          "oklch(50% 0.005 258)",
+          "oklch(62% 0.005 258)",
+          "oklch(74% 0.005 258)",
+          "oklch(86% 0.005 258)",
+          "oklch(95% 0.005 258)"
+        ]
+      },
+      "code-mark": {
+        "role": "neutral",
+        "displayName": "Highlighter Marker",
+        "canonical": "oklch(96.2% 0.062 95)",
+        "tonalRamp": [
+          "oklch(15% 0.062 95)",
+          "oklch(25% 0.062 95)",
+          "oklch(38% 0.062 95)",
+          "oklch(50% 0.062 95)",
+          "oklch(62% 0.062 95)",
+          "oklch(74% 0.062 95)",
+          "oklch(86% 0.062 95)",
+          "oklch(95% 0.062 95)"
+        ]
+      },
+      "accent-ink-dark": {
+        "role": "neutral",
+        "displayName": "Accent Ink (dark theme)",
+        "canonical": "oklch(15.9% 0.011 268)",
+        "tonalRamp": [
+          "oklch(15% 0.011 268)",
+          "oklch(25% 0.011 268)",
+          "oklch(38% 0.011 268)",
+          "oklch(50% 0.011 268)",
+          "oklch(62% 0.011 268)",
+          "oklch(74% 0.011 268)",
+          "oklch(86% 0.011 268)",
+          "oklch(95% 0.011 268)"
+        ]
+      },
+      "paper-dark": {
+        "role": "neutral",
+        "displayName": "Cool Paper (dark theme)",
+        "canonical": "oklch(17.3% 0.011 268)",
+        "tonalRamp": [
+          "oklch(15% 0.011 268)",
+          "oklch(25% 0.011 268)",
+          "oklch(38% 0.011 268)",
+          "oklch(50% 0.011 268)",
+          "oklch(62% 0.011 268)",
+          "oklch(74% 0.011 268)",
+          "oklch(86% 0.011 268)",
+          "oklch(95% 0.011 268)"
+        ]
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Sheet White (dark theme)",
+        "canonical": "oklch(20.4% 0.013 264)",
+        "tonalRamp": [
+          "oklch(15% 0.013 264)",
+          "oklch(25% 0.013 264)",
+          "oklch(38% 0.013 264)",
+          "oklch(50% 0.013 264)",
+          "oklch(62% 0.013 264)",
+          "oklch(74% 0.013 264)",
+          "oklch(86% 0.013 264)",
+          "oklch(95% 0.013 264)"
+        ]
+      },
+      "panel-dark": {
+        "role": "neutral",
+        "displayName": "Ledger Grey (dark theme)",
+        "canonical": "oklch(18.6% 0.011 261)",
+        "tonalRamp": [
+          "oklch(15% 0.011 261)",
+          "oklch(25% 0.011 261)",
+          "oklch(38% 0.011 261)",
+          "oklch(50% 0.011 261)",
+          "oklch(62% 0.011 261)",
+          "oklch(74% 0.011 261)",
+          "oklch(86% 0.011 261)",
+          "oklch(95% 0.011 261)"
+        ]
+      },
+      "panel-hover-dark": {
+        "role": "neutral",
+        "displayName": "Ledger Grey Pressed (dark theme)",
+        "canonical": "oklch(23.9% 0.017 264)",
+        "tonalRamp": [
+          "oklch(15% 0.017 264)",
+          "oklch(25% 0.017 264)",
+          "oklch(38% 0.017 264)",
+          "oklch(50% 0.017 264)",
+          "oklch(62% 0.017 264)",
+          "oklch(74% 0.017 264)",
+          "oklch(86% 0.017 264)",
+          "oklch(95% 0.017 264)"
+        ]
+      },
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Ink (dark theme)",
+        "canonical": "oklch(94.0% 0.009 265)",
+        "tonalRamp": [
+          "oklch(15% 0.009 265)",
+          "oklch(25% 0.009 265)",
+          "oklch(38% 0.009 265)",
+          "oklch(50% 0.009 265)",
+          "oklch(62% 0.009 265)",
+          "oklch(74% 0.009 265)",
+          "oklch(86% 0.009 265)",
+          "oklch(95% 0.009 265)"
+        ]
+      },
+      "ink-2-dark": {
+        "role": "neutral",
+        "displayName": "Ink 2 (dark theme)",
+        "canonical": "oklch(78.4% 0.020 263)",
+        "tonalRamp": [
+          "oklch(15% 0.020 263)",
+          "oklch(25% 0.020 263)",
+          "oklch(38% 0.020 263)",
+          "oklch(50% 0.020 263)",
+          "oklch(62% 0.020 263)",
+          "oklch(74% 0.020 263)",
+          "oklch(86% 0.020 263)",
+          "oklch(95% 0.020 263)"
+        ]
+      },
+      "ink-3-dark": {
+        "role": "neutral",
+        "displayName": "Ink 3 (dark theme)",
+        "canonical": "oklch(67.2% 0.024 263)",
+        "tonalRamp": [
+          "oklch(15% 0.024 263)",
+          "oklch(25% 0.024 263)",
+          "oklch(38% 0.024 263)",
+          "oklch(50% 0.024 263)",
+          "oklch(62% 0.024 263)",
+          "oklch(74% 0.024 263)",
+          "oklch(86% 0.024 263)",
+          "oklch(95% 0.024 263)"
+        ]
+      },
+      "rule-dark": {
+        "role": "neutral",
+        "displayName": "Rule (dark theme)",
+        "canonical": "oklch(28.4% 0.018 262)",
+        "tonalRamp": [
+          "oklch(15% 0.018 262)",
+          "oklch(25% 0.018 262)",
+          "oklch(38% 0.018 262)",
+          "oklch(50% 0.018 262)",
+          "oklch(62% 0.018 262)",
+          "oklch(74% 0.018 262)",
+          "oklch(86% 0.018 262)",
+          "oklch(95% 0.018 262)"
+        ]
+      },
+      "rule-strong-dark": {
+        "role": "neutral",
+        "displayName": "Strong Rule (dark theme)",
+        "canonical": "oklch(34.7% 0.021 263)",
+        "tonalRamp": [
+          "oklch(15% 0.021 263)",
+          "oklch(25% 0.021 263)",
+          "oklch(38% 0.021 263)",
+          "oklch(50% 0.021 263)",
+          "oklch(62% 0.021 263)",
+          "oklch(74% 0.021 263)",
+          "oklch(86% 0.021 263)",
+          "oklch(95% 0.021 263)"
+        ]
+      },
+      "ok-dark": {
+        "role": "semantic",
+        "displayName": "Settled Green (dark theme)",
+        "canonical": "oklch(74.7% 0.141 155)",
+        "tonalRamp": [
+          "oklch(15% 0.141 155)",
+          "oklch(25% 0.141 155)",
+          "oklch(38% 0.141 155)",
+          "oklch(50% 0.141 155)",
+          "oklch(62% 0.141 155)",
+          "oklch(74% 0.141 155)",
+          "oklch(86% 0.141 155)",
+          "oklch(95% 0.141 155)"
+        ]
+      },
+      "warn-dark": {
+        "role": "semantic",
+        "displayName": "Amber (dark theme)",
+        "canonical": "oklch(76.9% 0.137 75)",
+        "tonalRamp": [
+          "oklch(15% 0.137 75)",
+          "oklch(25% 0.137 75)",
+          "oklch(38% 0.137 75)",
+          "oklch(50% 0.137 75)",
+          "oklch(62% 0.137 75)",
+          "oklch(74% 0.137 75)",
+          "oklch(86% 0.137 75)",
+          "oklch(95% 0.137 75)"
+        ]
+      },
+      "bad-dark": {
+        "role": "semantic",
+        "displayName": "Signal Red (dark theme)",
+        "canonical": "oklch(70.7% 0.155 26)",
+        "tonalRamp": [
+          "oklch(15% 0.155 26)",
+          "oklch(25% 0.155 26)",
+          "oklch(38% 0.155 26)",
+          "oklch(50% 0.155 26)",
+          "oklch(62% 0.155 26)",
+          "oklch(74% 0.155 26)",
+          "oklch(86% 0.155 26)",
+          "oklch(95% 0.155 26)"
+        ]
+      },
+      "info-dark": {
+        "role": "semantic",
+        "displayName": "Progress Blue (dark theme)",
+        "canonical": "oklch(73.1% 0.139 260)",
+        "tonalRamp": [
+          "oklch(15% 0.139 260)",
+          "oklch(25% 0.139 260)",
+          "oklch(38% 0.139 260)",
+          "oklch(50% 0.139 260)",
+          "oklch(62% 0.139 260)",
+          "oklch(74% 0.139 260)",
+          "oklch(86% 0.139 260)",
+          "oklch(95% 0.139 260)"
+        ]
+      },
+      "code-bg-dark": {
+        "role": "neutral",
+        "displayName": "Code Ground (dark theme)",
+        "canonical": "oklch(18.7% 0.015 267)",
+        "tonalRamp": [
+          "oklch(15% 0.015 267)",
+          "oklch(25% 0.015 267)",
+          "oklch(38% 0.015 267)",
+          "oklch(50% 0.015 267)",
+          "oklch(62% 0.015 267)",
+          "oklch(74% 0.015 267)",
+          "oklch(86% 0.015 267)",
+          "oklch(95% 0.015 267)"
+        ]
+      },
+      "code-mark-dark": {
+        "role": "neutral",
+        "displayName": "Highlighter Marker (dark theme)",
+        "canonical": "oklch(31.8% 0.047 95)",
+        "tonalRamp": [
+          "oklch(15% 0.047 95)",
+          "oklch(25% 0.047 95)",
+          "oklch(38% 0.047 95)",
+          "oklch(50% 0.047 95)",
+          "oklch(62% 0.047 95)",
+          "oklch(74% 0.047 95)",
+          "oklch(86% 0.047 95)",
+          "oklch(95% 0.047 95)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page and document-header titles; --fs-5."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section headings incl. numbered §n sections; --fs-4."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "Sub-sections, empty-state titles; --fs-3."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default text and table cells; --fs-2; prose max 72ch."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Metadata, alerts, custody detail; --fs-1."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, table headers, nav group headings, state chips; --fs-0, sentence case."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Buttons, segmented controls; tabs at 14px."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Evidence excerpts; hashes, refs, paths and section numbers at 0.9em."
+      },
+      "density-compact": {
+        "displayName": "Compact density",
+        "purpose": "data-density=compact shifts --fs-0..5 to 11/12/13/15/17/20px, --row 32px, --pad 12px, --gap 8px."
+      }
+    },
+    "shadows": [
+      {
+        "name": "float",
+        "value": "0 1px 2px rgb(16 20 28 / 0.06), 0 4px 16px rgb(16 20 28 / 0.08)",
+        "purpose": "Decision bar, popover menus. Dark: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 18px rgb(0 0 0 / 0.35)."
+      },
+      {
+        "name": "lift",
+        "value": "0 2px 6px rgb(16 20 28 / 0.08), 0 16px 40px rgb(16 20 28 / 0.14)",
+        "purpose": "Drawer, toasts, off-canvas sidebar. Dark: 0 2px 8px rgb(0 0 0 / 0.45), 0 18px 44px rgb(0 0 0 / 0.5)."
+      },
+      {
+        "name": "focus-halo",
+        "value": "0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent)",
+        "purpose": "Focused inputs; selected mode card at 20%."
+      },
+      {
+        "name": "station-halo",
+        "value": "0 0 0 4px color-mix(in srgb, var(--info) 18%, transparent)",
+        "purpose": "Current transit station (3px on mini)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Drawer (220ms), off-canvas sidebar (220ms), toast entry (200ms)."
+      },
+      {
+        "name": "control-transition",
+        "value": "150ms",
+        "purpose": "Background, border, colour and halo changes on controls."
+      },
+      {
+        "name": "live-pulse",
+        "value": "1.6s ease-in-out infinite, opacity to 0.35",
+        "purpose": "Dot of live states only."
+      },
+      {
+        "name": "event-arrive",
+        "value": "900ms ease-out",
+        "purpose": "New timeline event background fade."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "prefers-reduced-motion collapses all animation and transition durations."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "stack-narrow",
+        "value": "560px"
+      },
+      {
+        "name": "form-stack",
+        "value": "640px"
+      },
+      {
+        "name": "list-stack",
+        "value": "760px"
+      },
+      {
+        "name": "off-canvas-nav",
+        "value": "860px"
+      },
+      {
+        "name": "grid-collapse",
+        "value": "1100px"
+      },
+      {
+        "name": "review-rail",
+        "value": "1180px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Everyday action; white ground, strong rule border.",
+      "html": "<button class=\"ds-btn\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7\"/></svg>Retry</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:4px;font:550 13px/1 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;border:1px solid var(--rule-strong,#c9ced7);background:var(--surface,#fff);color:var(--ink,#14171c);cursor:pointer;transition:background-color 150ms,border-color 150ms}.ds-btn:hover{background:var(--panel-hover,#e4e7ed)}.ds-btn:active{transform:translateY(.5px)}.ds-btn:focus-visible{outline:2px solid var(--accent,#1f3fbf);outline-offset:2px}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one decisive action at a decision point; the only accent fill.",
+      "html": "<button class=\"ds-btn-primary\">Accept <kbd class=\"ds-kbd\">A</kbd></button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:4px;font:550 13px/1 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;border:1px solid var(--accent,#1f3fbf);background:var(--accent,#1f3fbf);color:var(--accent-ink,#fff);cursor:pointer;transition:background-color 150ms}.ds-btn-primary:hover{background:color-mix(in oklch,var(--accent,#1f3fbf) 86%,black);border-color:color-mix(in oklch,var(--accent,#1f3fbf) 86%,black)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent,#1f3fbf);outline-offset:2px}.ds-kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:3px;border:1px solid color-mix(in srgb,currentColor 45%,transparent);border-bottom-width:2px;font:600 10.5px/1 ui-monospace,monospace}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive action; arms in place before committing.",
+      "html": "<button class=\"ds-btn-danger\">Deny</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:4px;font:550 13px/1 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;border:1px solid color-mix(in oklch,var(--bad,#b42318) 45%,var(--rule-strong,#c9ced7));background:var(--surface,#fff);color:var(--bad,#b42318);cursor:pointer}.ds-btn-danger:hover{background:color-mix(in oklch,var(--bad,#b42318) 8%,var(--surface,#fff))}.ds-btn-danger:focus-visible{outline:2px solid var(--accent,#1f3fbf);outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Tertiary and icon-only actions in toolbars and heads.",
+      "html": "<button class=\"ds-btn-ghost\">View all</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:4px;font:550 13px/1 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;border:1px solid transparent;background:transparent;color:var(--ink-2,#474e5c);cursor:pointer}.ds-btn-ghost:hover{background:var(--panel-hover,#e4e7ed);color:var(--ink,#14171c)}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent,#1f3fbf);outline-offset:2px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label above, hint below; accent border and srgb halo on focus.",
+      "html": "<label class=\"ds-field\"><span>Revision</span><input class=\"ds-input\" placeholder=\"main\"><small>Pinned to a commit hash when the run starts.</small></label>",
+      "css": ".ds-field{display:grid;gap:6px;font-family:system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif}.ds-field>span{font-size:13px;font-weight:600;color:var(--ink,#14171c)}.ds-field small{font-size:12px;color:var(--ink-3,#626a7a)}.ds-input{min-height:34px;padding:6px 10px;border-radius:4px;border:1px solid var(--rule-strong,#c9ced7);background:var(--surface,#fff);color:var(--ink,#14171c);font:400 14px/1.4 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;transition:border-color 150ms,box-shadow 150ms}.ds-input:hover{border-color:var(--ink-3,#626a7a)}.ds-input:focus{outline:none;border-color:var(--accent,#1f3fbf);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#1f3fbf) 22%,transparent)}"
+    },
+    {
+      "name": "State Chips",
+      "kind": "chip",
+      "refersTo": "state-chip",
+      "description": "Status = tone + form: solid, waiting (dashed), live (pulse), stopped (struck).",
+      "html": "<span class=\"ds-state\" data-tone=\"ok\">Completed</span> <span class=\"ds-state\" data-tone=\"info\" data-form=\"waiting\">Needs review</span> <span class=\"ds-state\" data-tone=\"info\" data-form=\"live\">Indexing</span> <span class=\"ds-state\" data-tone=\"warn\" data-form=\"waiting\">Pending</span> <span class=\"ds-state\" data-tone=\"bad\" data-form=\"stopped\">Failed</span>",
+      "css": ".ds-state{--tone:var(--muted,#626a7a);display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:11px;border:1px solid color-mix(in srgb,var(--tone) 55%,transparent);font:600 12px/1 system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;color:var(--tone);background:color-mix(in oklch,var(--tone) 8%,var(--surface,#fff));white-space:nowrap}.ds-state::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--tone)}.ds-state[data-form=waiting]{border-style:dashed;background:transparent}.ds-state[data-form=waiting]::before{background:transparent;box-shadow:inset 0 0 0 1.5px var(--tone)}.ds-state[data-form=stopped]{text-decoration:line-through;background:transparent}.ds-state[data-form=stopped]::before{border-radius:1px;height:2px;width:8px}.ds-state[data-form=live]::before{animation:ds-pulse 1.6s ease-in-out infinite}@keyframes ds-pulse{50%{opacity:.35}}.ds-state[data-tone=ok]{--tone:var(--ok,#157f3d)}.ds-state[data-tone=warn]{--tone:var(--warn,#9a5800)}.ds-state[data-tone=bad]{--tone:var(--bad,#b42318)}.ds-state[data-tone=info]{--tone:var(--info,#1d5fbf)}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Panel-layer sidebar; current page is a white tile; attention counts in Progress Blue.",
+      "html": "<nav class=\"ds-nav\"><h2>Work</h2><a href=\"#\" aria-current=\"page\">Dashboard</a><a href=\"#\">Review <span class=\"ds-count\">3</span></a><a href=\"#\">Runs</a></nav>",
+      "css": ".ds-nav{width:220px;padding:12px 10px;background:var(--panel,#eef0f4);font-family:system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;font-size:14px}.ds-nav h2{margin:0;padding:0 10px 6px;font-size:12px;font-weight:600;color:var(--ink-3,#626a7a)}.ds-nav a{display:flex;align-items:center;min-height:32px;padding:4px 10px;border-radius:4px;color:var(--ink-2,#474e5c);text-decoration:none;font-weight:500}.ds-nav a:hover{background:var(--panel-hover,#e4e7ed);color:var(--ink,#14171c)}.ds-nav a:focus-visible{outline:2px solid var(--accent,#1f3fbf);outline-offset:2px}.ds-nav a[aria-current=page]{background:var(--surface,#fff);color:var(--ink,#14171c);box-shadow:inset 0 0 0 1px var(--rule,#e1e4ea)}.ds-count{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;display:inline-grid;place-items:center;font-size:12px;font-weight:600;background:var(--info,#1d5fbf);color:var(--bg,#f6f7f9)}"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "White container with a ruled head; no shadow.",
+      "html": "<section class=\"ds-panel\"><header><h2>Runs in motion</h2><span>2 runs</span></header><div class=\"ds-panel-body\">libdemo [R-2] is waiting for review.</div></section>",
+      "css": ".ds-panel{background:var(--surface,#fff);border:1px solid var(--rule,#e1e4ea);border-radius:6px;font-family:system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;font-size:14px;color:var(--ink,#14171c)}.ds-panel header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--rule,#e1e4ea)}.ds-panel h2{margin:0;font-size:14px;font-weight:600}.ds-panel header span{color:var(--ink-3,#626a7a);font-size:13px}.ds-panel-body{padding:16px}"
+    },
+    {
+      "name": "Transit Stage Line",
+      "kind": "custom",
+      "refersTo": "stageline",
+      "description": "Run progress as stations; Progress Blue track, dashed current station when waiting on review, square interchange for lab validation.",
+      "html": "<div class=\"ds-line\"><i data-r></i><i data-r></i><i data-r></i><i data-r data-cur data-wait></i><i data-x></i><i></i></div>",
+      "css": ".ds-line{--c:var(--info,#1d5fbf);display:flex;width:320px}.ds-line i{position:relative;flex:1;display:grid;justify-items:center}.ds-line i::before{content:'';position:absolute;top:6px;left:-50%;width:100%;border-top:3px solid var(--rule-strong,#c9ced7)}.ds-line i:first-child::before{display:none}.ds-line i[data-r]::before{border-top-color:var(--c)}.ds-line i::after{content:'';position:relative;width:15px;height:15px;box-sizing:border-box;border-radius:50%;background:var(--surface,#fff);border:3px solid var(--rule-strong,#c9ced7)}.ds-line i[data-r]::after{border-color:var(--c);background:var(--c)}.ds-line i[data-cur]::after{background:var(--surface,#fff)}.ds-line i[data-wait]::after{border-style:dashed}.ds-line i[data-x]::after{border-radius:4px}"
+    },
+    {
+      "name": "Custody Trail",
+      "kind": "custom",
+      "refersTo": "custody",
+      "description": "Chain of seals joined by a rule; pending links are dashed.",
+      "html": "<ol class=\"ds-custody\"><li data-tone=\"info\"><b>Hypothesis drafted</b><small>Researcher agent</small></li><li data-tone=\"ok\"><b>Accepted</b><small>vic</small></li><li data-tone=\"warn\" data-pending><b>Lab experiment</b><small>requested by rita</small></li></ol>",
+      "css": ".ds-custody{list-style:none;margin:0;padding:0;font-family:system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;color:var(--ink,#14171c)}.ds-custody li{position:relative;padding:0 0 14px 30px;display:grid}.ds-custody li::before{content:'';position:absolute;left:0;top:1px;width:19px;height:19px;box-sizing:border-box;border-radius:50%;border:1.5px solid var(--rule-strong,#c9ced7);background:var(--surface,#fff)}.ds-custody li::after{content:'';position:absolute;left:9px;top:20px;bottom:0;border-left:1px solid var(--rule-strong,#c9ced7)}.ds-custody li:last-child::after{display:none}.ds-custody li[data-tone=ok]::before{border-color:var(--ok,#157f3d)}.ds-custody li[data-tone=warn]::before{border-color:var(--warn,#9a5800)}.ds-custody li[data-tone=info]::before{border-color:var(--info,#1d5fbf)}.ds-custody li[data-pending]::before{border-style:dashed}.ds-custody b{font-size:14px}.ds-custody small{font-size:13px;color:var(--ink-2,#474e5c)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Case File",
+    "overview": "REMNANT is the category standard for security and developer tools (left sidebar, tables, detail panels) executed precisely, with one specialised instrument per situation: a transit line for run progress, an RFC-style document header on runs and reports, a chain-of-custody trail on hypotheses and approvals, and line-numbered evidence excerpts. Every surface reads like a page of a well-kept case file: cool neutral paper and ink, quiet rules, numbered sections, references in brackets, hashes beside every claim.\n\nThe world is cool neutral paper and ink with a second, cooler panel layer for chrome (sidebar, sign-in side). Density is product-grade and user-switchable (comfortable or compact). Colour is scarce and functional: the brandable accent marks what you can act on, and semantic state colours always arrive paired with a line form, so nothing depends on colour alone. Motion is calm and short; nothing animates for decoration. Light and dark are equal citizens, both shipped and both derived from the same tokens.\n\nConfirmed rejections: the generic SaaS card wall, and hacker-film styling (black screens, neon green, terminal pastiche).",
+    "keyCharacteristics": [
+      "System sans for everything; monospace only for hashes, revisions, references, paths and code.",
+      "One brandable accent, reserved for actionable controls; progress and state use the info blue.",
+      "State = tone + form: solid (settled), dashed (waiting on a person or queue), pulsing dot (live), struck through (stopped).",
+      "1px rules and tonal layers carry structure; shadows are reserved for things that float.",
+      "One 12-column grid; panels span 12, 8/4, 6/6 or 4/4/4 and collapse to full width below 1100px."
+    ],
+    "rules": [
+      {
+        "name": "The Actionable Accent Rule",
+        "section": "colors",
+        "body": "The accent appears only on things you can act on (primary buttons, links that do something, focus, the selected choice in a picker). Progress, state and attention counts use Progress Blue (info), never the accent, so an organization's brand colour never reads as a status."
+      },
+      {
+        "name": "The Two-Signal Rule",
+        "section": "colors",
+        "body": "No state is expressed by colour alone. Every status comes from the status vocabulary as a tone plus a form, and the form must be legible in greyscale."
+      },
+      {
+        "name": "The Neutral Translucency Rule",
+        "section": "colors",
+        "body": "Translucent bars and overlays (top bar, decision bar, focus halos, selection, tinted borders) mix in `srgb` against `transparent`, never `oklch`, so they stay neutral instead of drifting in hue. Tinted fills against an opaque surface (state chip ground, alert ground, row hover, danger hover) mix in `oklch`."
+      },
+      {
+        "name": "The Identifier Rule",
+        "section": "typography",
+        "body": "Monospace marks identity, not mood: hashes, revisions, `[H-4]`-style references, file paths, operation names, document numbers and code. Never headings or prose."
+      },
+      {
+        "name": "The Tabular Rule",
+        "section": "typography",
+        "body": "Tables, counts, timestamps and the waiting-count numerals use tabular figures."
+      },
+      {
+        "name": "The Float-Only Shadow Rule",
+        "section": "elevation",
+        "body": "If it does not overlap other content, it gets a rule, not a shadow."
+      }
+    ],
+    "dos": [
+      "Do pick every status look from the status vocabulary (tone + form); use the dashed waiting form for anything waiting on a human.",
+      "Do keep the accent on actionable controls and use Progress Blue (`--info`) for progress, live state and attention counts.",
+      "Do mix translucent bars and halos in `srgb` against transparent; mix opaque tints in `oklch`.",
+      "Do show identifiers (hashes, revisions, refs, paths) in monospace with a copy affordance for hashes.",
+      "Do separate structure with 1px rules and the panel layer; keep containers at 6px and controls at 4px.",
+      "Do verify both themes and both densities; every colour token has a dark twin."
+    ],
+    "donts": [
+      "Don't fill state, progress or counts with the accent; a brand colour must never read as a status.",
+      "Don't express a state by colour alone or invent per-page status colours.",
+      "Don't add shadows to panels or anything that does not float.",
+      "Don't use monospace or uppercase-tracked labels for headings or decoration.",
+      "Don't reach for hacker-film styling: black-and-neon screens, terminal pastiche, decorative animation."
+    ]
+  }
+}

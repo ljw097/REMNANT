@@ -2,7 +2,8 @@
 
 ## Authentication
 
-- Every `/api/v1` route requires `Authorization: Bearer rmt_<43 chars>`. `/healthz` is the only unauthenticated route.
+- Every `/api/v1` route requires `Authorization: Bearer rmt_<43 chars>`, except `/healthz`, `GET /api/v1/branding` (name and accent for the sign-in page) and `/api/v1/setup`. The web UI's static files are public; they contain no data.
+- First-run setup (`POST /setup`) works only while there are no users and needs the one-time code `remnantd serve` prints to its log: 12 random characters, stored only as SHA-256, valid 24 hours, burned after 10 wrong attempts. Setup runs under a table lock, so two concurrent requests cannot both create an administrator. `remnantd setup` does the same from the command line.
 - Tokens are 32 random bytes. Only `SHA-256(token)` is stored (`api_tokens.token_sha256`); the plaintext is printed once by `remnantd create-user` / `create-token`.
 - A token is rejected if it is revoked, expired, or its user is disabled. Revoke with `UPDATE remnant.api_tokens SET revoked_at = now() WHERE id = …`.
 - Browsers: `EventSource` cannot send headers, so the UI reads the SSE stream with `fetch()` and a streaming body reader. Tokens are never put in query strings.
@@ -10,6 +11,10 @@
 ## Authorisation
 
 Roles are checked per route (see `architecture.md`). Separation of duty for approvals and pattern reviews is also enforced by `CHECK` constraints, so a bug in the API layer cannot bypass it.
+
+An instance runs in **team** mode (the default) or **personal** mode, chosen at setup and changeable by an administrator. Personal mode lets one person approve their own lab request or review their own pattern; the database still requires a second person unless the row is marked `self_approved` / `self_reviewed`, and the API sets that flag only in personal mode, so every self-decision stays visible in the record and the UI's chain of custody. The last active administrator cannot be demoted or disabled.
+
+The web UI is served with a strict Content-Security-Policy (same-origin scripts, styles and connections only; no inline code; no framing). It keeps the token in `sessionStorage` for the tab and never in URLs.
 
 ## Model credentials
 

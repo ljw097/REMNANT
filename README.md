@@ -29,9 +29,10 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 
 ## Quick start
 
-Requirements: Go ≥ 1.25 and PostgreSQL ≥ 14. The worker runtime additionally needs Linux with unprivileged user namespaces, bubblewrap (`bwrap`), and a systemd user session for cgroup limits; lab harnesses use the host's `/usr` toolchain (e.g. `cc` with sanitizers).
+Requirements: Go ≥ 1.25, Node.js ≥ 20.19 (to build the web UI) and PostgreSQL ≥ 14. The worker runtime additionally needs Linux with unprivileged user namespaces, bubblewrap (`bwrap`), and a systemd user session for cgroup limits; lab harnesses use the host's `/usr` toolchain (e.g. `cc` with sanitizers).
 
 ```sh
+(cd web && npm ci && npm run build)               # web UI, embedded into remnantd
 go build -o remnantd ./cmd/remnantd
 go build -o remnant-worker ./cmd/remnant-worker   # needed for REMNANT_WORKER=bwrap
 
@@ -40,9 +41,10 @@ export REMNANT_MASTER_KEY="$(head -c32 /dev/urandom | base64)"   # keep this saf
 export REMNANT_DATA_DIR=/var/lib/remnant
 
 ./remnantd migrate
-./remnantd create-user -username admin -role admin    # prints a bearer token once
 ./remnantd serve
 ```
+
+Open http://localhost:8080. On first start the log prints a one-time setup code; the setup page asks for it, creates the administrator, and lets you choose **team** (two-person approvals and reviews) or **personal** (one person may approve their own work; it is recorded as such). Without the browser: `./remnantd setup -mode team -username admin` prints the administrator's token, and `remnantd create-user` adds more users. See `docs/ui.md`.
 
 ```sh
 TOKEN=rmt_...
@@ -104,11 +106,13 @@ internal/buildinfo/    version stamped into release builds
 internal/llm/          model client (Anthropic SDK, schema-constrained JSON)
 internal/orchestrator/ run pipeline: leases, indexing, agents, lab dispatch, reports
 internal/store/        PostgreSQL access; migrations/ is embedded
-internal/api/          HTTP handlers and SSE
+internal/api/          HTTP handlers, SSE, and the embedded web UI
+web/                   web UI (React + Vite); web/dist is embedded by web/embed.go
 api/openapi.yaml       API contract
 docs/                  architecture, agent contracts, worker protocol, security, UI
 scripts/smoke.sh       end-to-end test against a disposable database
 scripts/fake_anthropic.py  local model-API stand-in used by smoke.sh
+scripts/dev-demo.sh        web UI with synthetic demo data
 scripts/release-build.sh   reproducible release archives and SHA256SUMS
 scripts/update-e2e.sh      self-update test with real binaries
 .github/workflows/         ci (tests, smoke, update e2e, signed dry-run) and release
@@ -130,6 +134,7 @@ go test ./...                                                             # unit
 REMNANT_TEST_DATABASE_URL=postgres://.../scratch go test ./internal/orchestrator/  # pipeline against PostgreSQL
 REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/smoke.sh                # binary + API + orchestrator + worker
 REMNANT_SMOKE_DATABASE_URL=postgres://.../scratch scripts/update-e2e.sh           # self-update, rollback, tampering
+(cd web && npm test)                                                      # web UI unit tests
 ```
 
 Both database-backed suites DROP the `remnant` schema in the database they are given. Neither needs network access or a real model key.
