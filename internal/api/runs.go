@@ -118,6 +118,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		PatternIDs   []int64         `json:"pattern_ids"`
 		LLMProfileID *int64          `json:"llm_profile_id"`
 		Limits       research.Limits `json:"limits"`
+		Auto         bool            `json:"auto"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -154,7 +155,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.store.CreateRun(r.Context(), store.RunInput{
 		ProjectID: in.ProjectID, TargetIDs: in.TargetIDs, PatternIDs: in.PatternIDs,
-		LLMProfileID: in.LLMProfileID, Limits: limits,
+		LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Auto,
 	}, principal(r).UserID)
 	if err != nil {
 		s.fail(w, r, err)

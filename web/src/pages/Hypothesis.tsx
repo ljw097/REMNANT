@@ -170,16 +170,25 @@ function Review({
           tone: h.skeptic_verdict === "refutes" ? "bad" : h.skeptic_verdict === "weakens" ? "warn" : "ok",
         }
       : { icon: "clock", what: t("custody.notChallenged"), who: t("custody.skepticAgent"), pending: true },
-    h.reviewed_by && !triageable
+    h.auto_triaged
       ? {
           icon: h.status === "rejected" || h.status === "duplicate" ? "x" : "check",
           what: t(`custody.triage.${h.status === "rejected" || h.status === "duplicate" ? h.status : "accepted"}` as Key),
-          who: userName(h.reviewed_by),
+          who: t("custody.autopilot"),
           when: <Time iso={h.reviewed_at} />,
-          detail: h.reviewer_note || undefined,
-          tone: h.status === "rejected" || h.status === "duplicate" ? "bad" : "ok",
+          detail: t("custody.autoNote"),
+          tone: h.status === "rejected" || h.status === "duplicate" ? "warn" : "ok",
         }
-      : { icon: "user", what: t("custody.awaitingTriage"), pending: true },
+      : h.reviewed_by && !triageable
+        ? {
+            icon: h.status === "rejected" || h.status === "duplicate" ? "x" : "check",
+            what: t(`custody.triage.${h.status === "rejected" || h.status === "duplicate" ? h.status : "accepted"}` as Key),
+            who: userName(h.reviewed_by),
+            when: <Time iso={h.reviewed_at} />,
+            detail: h.reviewer_note || undefined,
+            tone: h.status === "rejected" || h.status === "duplicate" ? "bad" : "ok",
+          }
+        : { icon: "user", what: t("custody.awaitingTriage"), pending: true },
     ...approvals
       .slice()
       .reverse()

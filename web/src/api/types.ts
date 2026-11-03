@@ -133,6 +133,7 @@ export interface Run {
   limits: Limits;
   policy: Policy;
   scope_hash: string;
+  auto: boolean;
   llm_profile_id: number | null;
   started_by: number | null;
   error_summary: string;
@@ -155,6 +156,7 @@ export interface RunDetail extends Run {
 
 export interface Hypothesis {
   id: number;
+  auto_triaged?: boolean;
   run_id: number;
   target_id: number;
   pattern_id: number | null;
@@ -318,7 +320,7 @@ export interface ProfileCheck {
   error?: string;
 }
 
-export type AgentRole = "hypothesis_researcher" | "skeptic";
+export type AgentRole = "historian" | "hypothesis_researcher" | "skeptic" | "reporter";
 
 export interface Agent {
   role: AgentRole;
@@ -414,6 +416,7 @@ export interface UserRef {
 }
 
 export interface IntakeOptions {
+  auto: boolean;
   mine_history: boolean;
   history_depth: number;
   max_commits: number;

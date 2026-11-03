@@ -129,7 +129,10 @@ export function RunDetailPage({ id }: { id: number }) {
         <DocHeader
           docno={`R-${r.id}`}
           title={project.data?.name ?? t("common.project", { id: r.project_id })}
-          state={<State look={runLook(r.status)} />}
+          state={<>
+            <State look={runLook(r.status)} />
+            {r.auto ? <span className="state" data-tone="info" data-form="solid" title={t("run.autoNote")}>{t("run.auto")}</span> : null}
+          </>}
           actions={actions}
           fields={[
             { label: t("run.field.revision"), value: r.targets.length === 1 ? <Hash value={r.targets[0]!.revision} /> : t("newRun.nTargets", { n: r.targets.length }) },

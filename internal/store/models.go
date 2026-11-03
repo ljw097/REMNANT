@@ -117,6 +117,7 @@ type Run struct {
 	ProjectID    int64           `db:"project_id" json:"project_id"`
 	Status       string          `db:"status" json:"status"`
 	Mode         string          `db:"mode" json:"mode"`
+	Auto         bool            `db:"auto" json:"auto"`
 	Limits       json.RawMessage `db:"limits" json:"limits"`
 	Policy       json.RawMessage `db:"policy" json:"policy"`
 	ScopeHash    string          `db:"scope_hash" json:"scope_hash"`
@@ -168,6 +169,7 @@ type Hypothesis struct {
 	ReviewerNote        string          `db:"reviewer_note" json:"reviewer_note"`
 	ReviewedBy          *int64          `db:"reviewed_by" json:"reviewed_by"`
 	ReviewedAt          *time.Time      `db:"reviewed_at" json:"reviewed_at"`
+	AutoTriaged         bool            `db:"auto_triaged" json:"auto_triaged"`
 	EvidenceCount       int64           `db:"evidence_count" json:"evidence_count"`
 	CreatedAt           time.Time       `db:"created_at" json:"created_at"`
 	UpdatedAt           time.Time       `db:"updated_at" json:"updated_at"`

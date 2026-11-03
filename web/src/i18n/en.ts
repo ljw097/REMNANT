@@ -925,6 +925,19 @@ const en: Record<keyof typeof ko, string> = {
   "signal.race": "race",
   "signal.leak": "leak/uninit",
   "patterns.origin": "Source commit",
+  "analyze.auto": "Autopilot: run through to a report",
+  "analyze.autoHint": "Triages the hypotheses and writes the report and a disclosure draft automatically. Lab experiments (code execution) and the actual disclosure send stay with a person. Off: hypotheses wait for human review.",
+  "newRun.auto": "Autopilot",
+  "newRun.autoHint": "Triages hypotheses and writes the report automatically. Lab experiments still need approval.",
+  "run.auto": "Autopilot",
+  "run.autoNote": "This run triaged its hypotheses and wrote its report without a person.",
+  "custody.autopilot": "Autopilot",
+  "custody.autoNote": "Decided automatically by autopilot, not a person. It is a candidate until a lab experiment confirms it.",
+  "art.kind.disclosure": "Disclosure draft",
+  "agents.reporter": "Reporter",
+  "agents.reporter.what": "Writes the human-facing report and a responsible-disclosure draft from the hypotheses that passed review, in natural prose. It grounds every statement in the run record and marks unconfirmed items as candidates.",
+  "agents.reporter.off": "With the Reporter off, runs get the deterministic report generated from the record instead of written prose.",
+  "agents.reporter.example": "e.g. Keep it brief. Do not state guesses as fact; when the evidence is static only, write “may”.",
 };
 
 export default en;

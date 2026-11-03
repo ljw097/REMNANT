@@ -925,6 +925,19 @@ const ko = {
   "signal.race": "경쟁 조건",
   "signal.leak": "누수·미초기화",
   "patterns.origin": "출처 커밋",
+  "analyze.auto": "자동으로 보고서까지 생성 (오토파일럿)",
+  "analyze.autoHint": "가설을 자동 판정하고 보고서와 제보 초안까지 만듭니다. 랩 실험(코드 실행)과 실제 제보 전송은 사람이 확인합니다. 끄면 가설이 사람 검토 대기 상태로 남습니다.",
+  "newRun.auto": "오토파일럿",
+  "newRun.autoHint": "가설을 자동 판정하고 보고서를 만듭니다. 랩 실험은 승인이 필요합니다.",
+  "run.auto": "오토파일럿",
+  "run.autoNote": "가설이 사람 없이 자동 판정되고 보고서가 생성된 런입니다.",
+  "custody.autopilot": "오토파일럿",
+  "custody.autoNote": "사람이 아니라 오토파일럿이 자동으로 판정했습니다. 랩 실험으로 확정되기 전까지는 후보입니다.",
+  "art.kind.disclosure": "제보 초안",
+  "agents.reporter": "보고서 작성자",
+  "agents.reporter.what": "검토를 통과한 가설로 사람이 읽을 보고서와 제보(responsible disclosure) 초안을 자연스러운 문체로 씁니다. 사실은 런 기록에 근거하고, 미확정 항목은 후보로 표시합니다.",
+  "agents.reporter.off": "보고서 작성자를 끄면 사람이 쓴 문체 보고서 대신 기록에서 자동 생성한 기본 보고서만 나옵니다.",
+  "agents.reporter.example": "예: 간결하게. 추측을 단정하지 말고 근거가 정적 분석뿐이면 ‘~일 수 있다’로 쓰세요.",
 } as const satisfies Record<string, string>;
 
 export default ko;

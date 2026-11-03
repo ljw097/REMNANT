@@ -171,7 +171,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 // instructions and per-call token cap.
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	role := r.PathValue("role")
-	if role != "historian" && role != "hypothesis_researcher" && role != "skeptic" {
+	if role != "historian" && role != "hypothesis_researcher" && role != "skeptic" && role != "reporter" {
 		writeError(w, http.StatusNotFound, "not_found", "unknown agent")
 		return
 	}

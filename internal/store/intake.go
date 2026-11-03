@@ -34,10 +34,13 @@ type IntakeOptions struct {
 	IncludePatterns []int64 `json:"include_patterns"`
 	// Limits are the run's limits; zero fields take the run defaults.
 	Limits research.Limits `json:"limits"`
+	// Auto runs the hunt on autopilot: it triages its own hypotheses and
+	// finalises a report without a person.
+	Auto bool `json:"auto"`
 }
 
 func DefaultIntakeOptions() IntakeOptions {
-	return IntakeOptions{MineHistory: true, HistoryDepth: 500, MaxCommits: 12, MaxPatterns: 8, MaxTokens: 150000, IncludePatterns: []int64{}}
+	return IntakeOptions{MineHistory: true, HistoryDepth: 500, MaxCommits: 12, MaxPatterns: 8, MaxTokens: 150000, IncludePatterns: []int64{}, Auto: true}
 }
 
 // Normalize fills zero fields with defaults and checks ranges.

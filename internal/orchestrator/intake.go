@@ -300,7 +300,7 @@ func (o *Orchestrator) IntakeOnce(ctx context.Context) (bool, error) {
 		by = *in.CreatedBy
 	}
 	run, err := o.store.CreateRun(ctx, store.RunInput{ProjectID: in.ProjectID, TargetIDs: []int64{in.TargetID},
-		PatternIDs: ids, LLMProfileID: in.LLMProfileID, Limits: limits}, by)
+		PatternIDs: ids, LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Options.Auto}, by)
 	if err != nil {
 		return true, fail("starting the run: " + err.Error())
 	}

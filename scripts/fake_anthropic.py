@@ -51,7 +51,29 @@ def historian(envelope):
     }
 
 
+def reporter(envelope):
+    calls["reporter"] = calls.get("reporter", 0) + 1
+    fs = envelope.get("findings", [])
+    ids = ", ".join("H%d" % f["hypothesis_id"] for f in fs)
+    return {
+        "executive_summary": "SYNTHETIC (fake model): reviewed %d candidate finding(s) (%s). None was confirmed by running code, so each is a candidate pending validation." % (len(fs), ids or "none"),
+        "overall_severity": "medium",
+        "findings": [{
+            "hypothesis_id": f["hypothesis_id"],
+            "severity": "medium",
+            "summary": "Candidate: " + f.get("claim", "")[:200],
+            "impact": "If the hypothesis holds, the affected code may be reachable with attacker-influenced input.",
+            "remediation": "Add the missing check described in the hypothesis and cover it with a test.",
+        } for f in fs],
+        "disclosure_subject": "Possible memory-safety issue found by source review",
+        "disclosure_body": "Hello, a source-level review flagged a possible issue in the areas cited as %s. The findings are candidates from static analysis and have not been confirmed by running code. How would you like to receive the details?" % (ids or "the attached report"),
+        "caveats": ["Synthetic report from scripts/fake_anthropic.py.", "Candidates are not confirmed by executing code."],
+    }
+
+
 def answer(system, envelope):
+    if "You are the Reporter" in system:
+        return reporter(envelope)
     if "You are the Historian" in system:
         return historian(envelope)
     ev = envelope["evidence"][0]

@@ -308,11 +308,11 @@ check "profile bad options" 400 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"option
 check "profile key rotation" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"api_key":"sk-ant-rotated-99999999"}')"; check "rotated hint" "…9999" "$(j "['api_key_hint']")"
 check "rotated key works" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
 check "delete profile in use" 409 "$(req $ADMIN DELETE /llm-profiles/$LLM)"
-check "agents" 200 "$(req $RES GET /agents)"; check "three agents" 3 "$(j ".__len__()")"
+check "agents" 200 "$(req $RES GET /agents)"; check "four agents" 4 "$(j ".__len__()")"
 check "agent by researcher" 403 "$(req $RES PATCH /agents/skeptic '{"enabled":false}')"
 check "agent instructions" 200 "$(req $ADMIN PATCH /agents/hypothesis_researcher '{"config":{"instructions":"Prefer length arithmetic.","max_call_tokens":4096}}')"
 check "agent bad cap" 400 "$(req $ADMIN PATCH /agents/skeptic '{"config":{"max_call_tokens":10}}')"
-check "unknown agent" 404 "$(req $ADMIN PATCH /agents/reporter '{"enabled":false}')"
+check "unknown agent" 404 "$(req $ADMIN PATCH /agents/validator '{"enabled":false}')"
 check "research settings" 200 "$(req $RES GET /settings/research)"; check "default ttl" 24 "$(j "['settings']['approval_ttl_hours']")"
 SET=$(python3 -c "import json; d=json.load(open('$SP/body'))['settings']; print(json.dumps(d))")
 mut() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); exec(sys.argv[2]); print(json.dumps(d))' "$SET" "$1"; }
@@ -334,6 +334,21 @@ check "intake refused without hosts" 403 "$(req $RES POST /intakes '{"url":"gith
 check "intake by reviewer" 403 "$(req $REV POST /intakes '{"url":"github.com/org/repo"}')"
 check "intakes list" 200 "$(req $RES GET /intakes)"; check "no intakes" 0 "$(j ".__len__()")"
 check "historian agent" 200 "$(req $ADMIN PATCH /agents/historian '{"config":{"instructions":"Ignore test-only commits."}}')"
+
+# Autopilot and the Reporter.
+check "reporter agent" 200 "$(req $ADMIN PATCH /agents/reporter '{"enabled":true,"config":{"instructions":"Keep it brief."}}')"
+check "autopilot run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"pattern_ids\":[$PAT],\"auto\":true}")"
+ARUN=$(j "['id']"); check "run is auto" True "$(j "['auto']")"
+check "autopilot completes" completed "$(wait_status $ARUN completed 60)"
+check "no human triage" 0 "$($PSQL -c "select count(*) from remnant.hypotheses where run_id=$ARUN and reviewed_by is not null")"
+check "auto-triaged" 1 "$($PSQL -c "select count(*) from remnant.hypotheses where run_id=$ARUN and auto_triaged")"
+check "disclosure artifact" 1 "$($PSQL -c "select count(*) from remnant.artifacts where run_id=$ARUN and artifact_kind='disclosure'")"
+check "autopilot report" 200 "$(req $RES GET /runs/$ARUN/artifacts)"
+MD=$(python3 -c "import json; print([a for a in json.load(open('$SP/body')) if a['artifact_kind']=='report' and a['name'].endswith('.md')][0]['id'])")
+check "report download" 200 "$(curl -s -o $SP/report2.md -w '%{http_code}' -H "Authorization: Bearer $RES" $B/runs/$ARUN/artifacts/$MD)"
+check "report has narrative" 1 "$(grep -c 'Security review' $SP/report2.md)"
+check "report marks provenance" 1 "$(grep -c 'Prepared by REMNANT' $SP/report2.md)"
+check "report keeps appendix" 1 "$(grep -c 'Appendix: full technical detail' $SP/report2.md)"
 
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
 

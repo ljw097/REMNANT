@@ -11,7 +11,7 @@ import (
 	"github.com/ljw097/remnant/internal/research"
 )
 
-const runCols = `id, project_id, status, mode, limits, policy, scope_hash, llm_profile_id, started_by,
+const runCols = `id, project_id, status, mode, auto, limits, policy, scope_hash, llm_profile_id, started_by,
 	error_summary, input_tokens, output_tokens, resume_stage, resume_status, attempts, active_ms,
 	queued_at, started_at, completed_at`
 
@@ -21,6 +21,9 @@ type RunInput struct {
 	PatternIDs   []int64 // deduplicated by the caller
 	LLMProfileID *int64  // nil: use the project's profile
 	Limits       research.Limits
+	// Auto runs autopilot: the run triages its own hypotheses and finalises
+	// a report without a person. Lab experiments still need approval.
+	Auto bool
 }
 
 // CreateRun pins every target to its current revision, computes the scope
@@ -90,9 +93,9 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput, startedBy int64) (Ru
 		}
 
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO runs(project_id, limits, policy, scope_hash, llm_profile_id, started_by)
-			VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-			in.ProjectID, in.Limits, pol, scopeHash, *profile, startedBy).Scan(&runID); err != nil {
+			INSERT INTO runs(project_id, limits, policy, scope_hash, llm_profile_id, started_by, auto)
+			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+			in.ProjectID, in.Limits, pol, scopeHash, *profile, startedBy, in.Auto).Scan(&runID); err != nil {
 			return mapErr(err)
 		}
 		if _, err := tx.Exec(ctx, `

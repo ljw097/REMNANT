@@ -47,6 +47,8 @@ func (s *Server) createIntake(w http.ResponseWriter, r *http.Request) {
 		LLMProfileID *int64              `json:"llm_profile_id"`
 		Options      store.IntakeOptions `json:"options"`
 	}
+	// Defaults (autopilot on, history mining on) hold for fields the body omits.
+	in.Options = store.DefaultIntakeOptions()
 	if !decode(w, r, &in) {
 		return
 	}
