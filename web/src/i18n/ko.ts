@@ -938,6 +938,17 @@ const ko = {
   "agents.reporter.what": "검토를 통과한 가설로 사람이 읽을 보고서와 제보(responsible disclosure) 초안을 자연스러운 문체로 씁니다. 사실은 런 기록에 근거하고, 미확정 항목은 후보로 표시합니다.",
   "agents.reporter.off": "보고서 작성자를 끄면 사람이 쓴 문체 보고서 대신 기록에서 자동 생성한 기본 보고서만 나옵니다.",
   "agents.reporter.example": "예: 간결하게. 추측을 단정하지 말고 근거가 정적 분석뿐이면 ‘~일 수 있다’로 쓰세요.",
+  "nav.collapse": "사이드바 접기/펼치기",
+  "nav.search": "검색",
+  "cmd.title": "명령 팔레트",
+  "cmd.search": "검색",
+  "cmd.placeholder": "페이지·런·패턴·프로젝트로 이동… (⌘K)",
+  "cmd.empty": "결과가 없습니다.",
+  "cmd.group.go": "이동",
+  "cmd.group.runs": "런",
+  "cmd.group.patterns": "패턴",
+  "cmd.group.projects": "프로젝트",
+  "cmd.group.models": "모델 프로필",
 } as const satisfies Record<string, string>;
 
 export default ko;

@@ -938,6 +938,17 @@ const en: Record<keyof typeof ko, string> = {
   "agents.reporter.what": "Writes the human-facing report and a responsible-disclosure draft from the hypotheses that passed review, in natural prose. It grounds every statement in the run record and marks unconfirmed items as candidates.",
   "agents.reporter.off": "With the Reporter off, runs get the deterministic report generated from the record instead of written prose.",
   "agents.reporter.example": "e.g. Keep it brief. Do not state guesses as fact; when the evidence is static only, write “may”.",
+  "nav.collapse": "Collapse or expand the sidebar",
+  "nav.search": "Search",
+  "cmd.title": "Command palette",
+  "cmd.search": "Search",
+  "cmd.placeholder": "Go to a page, run, pattern or project… (⌘K)",
+  "cmd.empty": "No results.",
+  "cmd.group.go": "Go to",
+  "cmd.group.runs": "Runs",
+  "cmd.group.patterns": "Patterns",
+  "cmd.group.projects": "Projects",
+  "cmd.group.models": "Model profiles",
 };
 
 export default en;
