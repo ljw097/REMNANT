@@ -3,6 +3,7 @@ import { appName, SessionProvider, useSession } from "./session";
 import { useI18n, type Key } from "./i18n";
 import { Link, match, navigate, useLocation } from "./router";
 import { Icon, type IconName } from "./ui/Icon";
+import { CommandPalette } from "./ui/CommandPalette";
 import { Button, ToastProvider } from "./ui/components";
 import { SignIn } from "./pages/SignIn";
 import { Setup } from "./pages/Setup";
@@ -68,6 +69,27 @@ function Shell() {
   const { t } = useI18n();
   const { path } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("remnant.sidebar") === "collapsed";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    const onCollapse = () =>
+      setCollapsed((c) => {
+        const next = !c;
+        try {
+          localStorage.setItem("remnant.sidebar", next ? "collapsed" : "open");
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    window.addEventListener("remnant:collapse", onCollapse);
+    return () => window.removeEventListener("remnant:collapse", onCollapse);
+  }, []);
 
   // First load lands on the user's start page.
   useEffect(() => {
@@ -84,13 +106,14 @@ function Shell() {
   const update = version?.update;
 
   return (
-    <div className="shell" data-nav={navOpen ? "open" : "closed"}>
+    <div className="shell" data-nav={navOpen ? "open" : "closed"} data-collapsed={collapsed ? "true" : undefined}>
+      <CommandPalette />
       <aside className="sidebar" aria-label={t("nav.label")}>
         <Link to="/" className="brand">
           <span className="brand-mark" aria-hidden="true">
             <Icon name="shield" size={14} />
           </span>
-          {appName(branding)}
+          <span className="brand-name">{appName(branding)}</span>
         </Link>
         <nav className="nav">
           {navGroups.map((g) => (
@@ -101,9 +124,9 @@ function Shell() {
                 .map((i) => {
                   const n = summary && i.count ? i.count(summary) : 0;
                   return (
-                    <Link key={i.to} to={i.to} aria-current={active(i.to) ? "page" : undefined}>
+                    <Link key={i.to} to={i.to} aria-current={active(i.to) ? "page" : undefined} title={t(i.label)}>
                       <Icon name={i.icon} />
-                      {t(i.label)}
+                      <span className="nav-label">{t(i.label)}</span>
                       {n > 0 ? (
                         <span className={i.attention ? "count attention" : "count"} aria-label={t("nav.countLabel", { n })}>
                           {n}
@@ -116,9 +139,9 @@ function Shell() {
           ))}
           <div className="nav-group">
             <h2>{t("nav.group.settings")}</h2>
-            <Link to="/settings" aria-current={active("/settings") ? "page" : undefined}>
+            <Link to="/settings" aria-current={active("/settings") ? "page" : undefined} title={t("nav.settings")}>
               <Icon name="settings" />
-              {t("nav.settings")}
+              <span className="nav-label">{t("nav.settings")}</span>
               {update?.available && can("admin") ? <span className="count attention">1</span> : null}
             </Link>
           </div>
@@ -162,6 +185,7 @@ export function Frame({ crumbs, children, actions }: { crumbs: { label: ReactNod
     <>
       <header className="topbar">
         <Button className="menu-btn" variant="ghost" iconOnly icon="menu" aria-label={t("nav.menu")} onClick={() => window.dispatchEvent(new Event("remnant:menu"))} />
+        <Button className="collapse-btn" variant="ghost" iconOnly icon="layout" aria-label={t("nav.collapse")} title={t("nav.collapse")} onClick={() => window.dispatchEvent(new Event("remnant:collapse"))} />
         <nav className="crumbs" aria-label={t("nav.breadcrumbs")}>
           {crumbs.map((c, i) => (
             <span key={i} className="row" style={{ gap: 6, flexWrap: "nowrap", minWidth: 0 }}>
@@ -170,6 +194,11 @@ export function Frame({ crumbs, children, actions }: { crumbs: { label: ReactNod
             </span>
           ))}
         </nav>
+        <button type="button" className="topbar-search" onClick={() => window.dispatchEvent(new Event("remnant:command"))} aria-label={t("cmd.title")}>
+          <Icon name="search" size={15} />
+          <span>{t("cmd.search")}</span>
+          <kbd>⌘K</kbd>
+        </button>
         <div className="topbar-actions">
           {actions}
           <Button

@@ -16,6 +16,7 @@ export function PatternsPage() {
   const { query } = useLocation();
   const [q, setQ] = useState("");
   const [cls, setCls] = useState("");
+  const [status, setStatus] = useState<"all" | "validated" | "reviewed" | "unreviewed" | "mined">("all");
   const [creating, setCreating] = useState(query.get("new") === "1");
   const params = new URLSearchParams();
   if (q.trim()) params.set("q", q.trim());
@@ -24,7 +25,10 @@ export function PatternsPage() {
   const all = useApi<Pattern[]>("/patterns");
   const classes = [...new Set((all.data ?? []).map((p) => p.vulnerability_class))].sort();
   const col = useColumns("patterns");
-  const rows = list.data ?? [];
+  const rows = (list.data ?? []).filter((p) =>
+    status === "all" ? true : status === "mined" ? p.source_kind === "mined" : p.validation_status === status,
+  );
+  const chips: typeof status[] = ["all", "validated", "reviewed", "unreviewed", "mined"];
 
   return (
     <Frame crumbs={[{ label: t("nav.patterns") }]}>
@@ -41,6 +45,13 @@ export function PatternsPage() {
       />
       <Panel>
         <div className="toolbar">
+          <div className="chips" role="group" aria-label={t("patterns.filter")}>
+            {chips.map((c) => (
+              <button key={c} type="button" className="chip" aria-pressed={status === c} onClick={() => setStatus(c)}>
+                {t(`patterns.filter.${c}` as Key)}
+              </button>
+            ))}
+          </div>
           <input className="input search" type="search" placeholder={t("patterns.search")} aria-label={t("patterns.search")} value={q} onChange={(e) => setQ(e.target.value)} />
           <select className="select" aria-label={t("patterns.class")} value={cls} onChange={(e) => setCls(e.target.value)}>
             <option value="">{t("patterns.allClasses")}</option>

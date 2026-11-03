@@ -9,7 +9,35 @@ import { defaultDashboard, type PanelId, type PanelPref } from "../prefs";
 import { Button, Empty, ErrorNote, PageHead, Panel, Priority, SkeletonRows, State, Time, useToast } from "../ui/components";
 import { StageLine } from "../ui/domain";
 import { hypothesisLook, runLook, terminalRun } from "../ui/status";
-import { Icon } from "../ui/Icon";
+import { Icon, type IconName } from "../ui/Icon";
+
+function StatCards() {
+  const { t } = useI18n();
+  const { summary: s, can } = useSession();
+  const cards: { to: string; icon: IconName; label: Key; value?: number; sub?: string; tone?: "ok" | "warn" | "info"; show?: boolean }[] = [
+    { to: "/runs", icon: "runs", label: "stat.activeRuns", value: s?.active_runs, sub: s && s.paused_runs > 0 ? t("stat.paused", { n: s.paused_runs }) : undefined, tone: "info" },
+    { to: "/review", icon: "review", label: "stat.awaitingTriage", value: s?.awaiting_triage, tone: s && s.awaiting_triage > 0 ? "warn" : undefined, show: can("reviewer") },
+    { to: "/approvals", icon: "approvals", label: "stat.pendingApprovals", value: s?.pending_approvals, tone: s && s.pending_approvals > 0 ? "warn" : undefined },
+    { to: "/findings", icon: "findings", label: "stat.validated", value: s?.validated, sub: s && s.validation_pending > 0 ? t("stat.inValidation", { n: s.validation_pending }) : undefined, tone: "ok" },
+    { to: "/projects", icon: "projects", label: "stat.projects", value: s?.projects, sub: t("stat.targets", { n: s?.targets ?? 0 }) },
+  ];
+  return (
+    <div className="statcards">
+      {cards
+        .filter((c) => c.show !== false)
+        .map((c) => (
+          <Link key={c.to} to={c.to} className="statcard" data-tone={c.tone}>
+            <span className="statcard-top">
+              <Icon name={c.icon} size={15} />
+              {t(c.label)}
+            </span>
+            <span className="statcard-value">{c.value ?? "—"}</span>
+            <span className="statcard-sub">{c.sub ?? "\u00a0"}</span>
+          </Link>
+        ))}
+    </div>
+  );
+}
 
 export function Dashboard() {
   const { t } = useI18n();
@@ -29,6 +57,7 @@ export function Dashboard() {
         }
       />
       {editing ? <DashboardEditor value={prefs.dashboard} onSave={(d) => savePrefs({ dashboard: d })} onClose={() => setEditing(false)} /> : null}
+      <StatCards />
       {panels.length === 0 ? (
         <Panel>
           <Empty title={t("dash.emptyTitle")} body={t("dash.emptyBody")} action={<Button onClick={() => setEditing(true)}>{t("dash.customize")}</Button>} />

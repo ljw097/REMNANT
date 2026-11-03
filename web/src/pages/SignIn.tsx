@@ -15,6 +15,13 @@ export function SignIn({ onSignedIn, branding, lang, setLang, error, status }: G
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
+  const [remember, setRemember] = useState(() => {
+    try {
+      return localStorage.getItem("remnant.remember") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string>();
   const shown = localError ?? (error ? t(error as Key) : undefined);
@@ -24,7 +31,7 @@ export function SignIn({ onSignedIn, branding, lang, setLang, error, status }: G
     setBusy(true);
     setLocalError(undefined);
     try {
-      await post("/auth/login", { username: username.trim().toLowerCase(), password });
+      await post("/auth/login", { username: username.trim().toLowerCase(), password, remember });
       setPassword("");
       await onSignedIn();
     } catch (err) {
@@ -120,6 +127,21 @@ export function SignIn({ onSignedIn, branding, lang, setLang, error, status }: G
                   {shown}
                 </Alert>
               ) : null}
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => {
+                    setRemember(e.target.checked);
+                    try {
+                      localStorage.setItem("remnant.remember", e.target.checked ? "1" : "0");
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                />
+                {t("signin.remember")}
+              </label>
               <Button type="submit" variant="primary" size="lg" loading={busy} disabled={!username.trim() || !password}>
                 {t("signin.submit")}
               </Button>

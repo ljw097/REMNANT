@@ -1,5 +1,6 @@
 // Command remnantd is the REMNANT research server.
 //
+//	remnantd local                                   one-command local run (auto DB, opens the browser)
 //	remnantd serve                                   run migrations, then serve the API and web UI
 //	remnantd migrate                                 apply pending migrations and exit
 //	remnantd setup -profile personal|team|managed -username NAME [-password-stdin]
@@ -75,12 +76,24 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths map[string]string) error {
 	switch cmd {
-	case "serve", "migrate", "setup", "create-user", "create-token", "reset-password", "update":
+	case "serve", "local", "migrate", "setup", "create-user", "create-token", "reset-password", "update":
 	case "-h", "--help", "help":
-		fmt.Println("usage: remnantd [serve|migrate|setup|create-user|create-token|reset-password|update|version] [flags]")
+		fmt.Println("usage: remnantd [serve|local|migrate|setup|create-user|create-token|reset-password|update|version] [flags]")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
+	}
+
+	// `local` runs REMNANT on this machine with one command: it fills local
+	// defaults, brings up a database if needed, then serves and opens the
+	// setup page.
+	openLocal := false
+	if cmd == "local" {
+		if err := prepareLocalEnv(log); err != nil {
+			return err
+		}
+		openLocal = true
+		cmd = "serve"
 	}
 
 	cfg, err := config.Load(os.Getenv)
@@ -122,6 +135,9 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths
 	}
 	if err := announceSetup(ctx, log, st, cfg); err != nil {
 		return err
+	}
+	if openLocal {
+		go openWhenReady(cfg.ListenAddr)
 	}
 	return serve(ctx, log, st, cfg, paths)
 }

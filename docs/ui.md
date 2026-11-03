@@ -31,6 +31,9 @@ The rules are: self-approval of lab requests, self-review of patterns, administr
 
 ### Working alone on your own machine
 
+`scripts/local.sh` (or `remnantd local`) does all of this in one command: local defaults, a database in Docker when none is configured, migrations, serve, and it opens the setup page in your browser.
+
+
 For the personal type nothing else is needed: `remnantd serve` listens on `127.0.0.1:8080` by default, and without `REMNANT_MASTER_KEY` it creates `<data dir>/master.key` (mode 0600) on first start and reuses it. While it listens only on loopback, remnantd answers only requests addressed to `localhost`/`127.0.0.1`/`::1`, so a web page elsewhere cannot reach it by DNS rebinding.
 
 ## Sign-in

@@ -46,7 +46,7 @@ export function defaultDashboard(role: Role): PanelPref[] {
 
 export function defaultPrefs(role: Role, lang: Lang): Prefs {
   return {
-    theme: "system",
+    theme: "light",
     density: "comfortable",
     language: lang,
     startPage: role === "reviewer" ? "/review" : "/",
@@ -97,9 +97,22 @@ export function applyAppearance(p: Pick<Prefs, "theme" | "density" | "language">
   else root.style.removeProperty("--accent-base");
   try {
     localStorage.setItem("remnant.lang", p.language);
+    localStorage.setItem("remnant.theme", p.theme);
   } catch {
     // ignore
   }
+}
+
+/** The theme to use before sign-in: the last choice this browser made,
+    otherwise follow the OS. So the sign-in and setup screens honour dark too. */
+export function storedTheme(): Prefs["theme"] {
+  try {
+    const v = localStorage.getItem("remnant.theme");
+    if (v === "light" || v === "dark" || v === "system") return v;
+  } catch {
+    // ignore
+  }
+  return "system";
 }
 
 /** WCAG contrast ratio of a colour against white; used to warn about unreadable accents. */
