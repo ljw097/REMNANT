@@ -127,13 +127,66 @@ paths:
       summary: Check a stored profile's key, endpoint and model (admin) without spending tokens
       responses:
         '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileCheck' } } } }
+  /intakes:
+    get:
+      summary: Recent repository intakes (up to 50)
+      responses:
+        '200': { description: Intakes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Intake' } } } } }
+    post:
+      summary: Analyze a repository from its URL (researcher)
+      description: |
+        Creates (or uses) a project and a git target from a pasted repository URL — `github.com/org/repo`,
+        `.../tree/<branch>` and `.git` URLs are accepted — on a host in REMNANT_REPO_HOSTS. The orchestrator
+        fetches it with up to `history_depth` commits, keeps the commits whose messages look like security
+        fixes, has the Historian draft root-cause patterns (source_kind `mined`, unreviewed) from their diffs,
+        and starts a run that hunts for the same mistakes. Poll `GET /intakes/{id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                ref: { type: string, description: Branch, tag or commit; overrides one in the URL }
+                project_id: { type: [integer, 'null'], description: Omit to create a project named after the repository }
+                project_name: { type: string, maxLength: 120 }
+                llm_profile_id: { type: [integer, 'null'], description: Required when creating a project and more than one profile exists }
+                options: { $ref: '#/components/schemas/IntakeOptions' }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Intake' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: Remote repositories are off, or the host is not allowed (code source_policy), $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /intakes/config:
+    get:
+      summary: Allowed repository hosts and the default intake options
+      responses:
+        '200': { description: Config, content: { application/json: { schema: { type: object, properties: { repo_hosts: { type: array, items: { type: string } }, defaults: { $ref: '#/components/schemas/IntakeOptions' } } } } } }
+  /intakes/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: An intake and the security-fix candidates found in its history (without diffs)
+      responses:
+        '200':
+          description: Intake
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intake: { $ref: '#/components/schemas/Intake' }
+                  commits: { type: array, items: { $ref: '#/components/schemas/CommitRecord' } }
+                  repo_hosts: { type: array, items: { type: string } }
+        '404': { $ref: '#/components/responses/Error' }
   /agents:
     get:
       summary: The pipeline's agents and their settings
       responses:
         '200': { description: Agents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Agent' } } } } }
   /agents/{role}:
-    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [hypothesis_researcher, skeptic] } }]
+    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [historian, hypothesis_researcher, skeptic] } }]
     patch:
       summary: Change an agent (admin)
       description: llm_profile_id 0 returns the agent to the run's profile. Instructions are added after the agent's rules and cannot override them.
@@ -867,7 +920,8 @@ components:
       properties:
         id: { type: integer, format: int64 }
         parent_pattern_id: { type: [integer, 'null'] }
-        source_kind: { type: string, enum: [historical, validated_internal, researcher_authored] }
+        source_kind: { type: string, enum: [historical, validated_internal, researcher_authored, mined] }
+        origin: { type: object, description: 'For mined patterns: repository, commit, committed_at, subject, signals' }
         source_ref: { type: string }
         title: { type: string }
         vulnerability_class: { type: string }
@@ -1155,7 +1209,7 @@ components:
     Agent:
       type: object
       properties:
-        role: { type: string, enum: [hypothesis_researcher, skeptic] }
+        role: { type: string, enum: [historian, hypothesis_researcher, skeptic] }
         display_name: { type: string }
         enabled: { type: boolean }
         llm_profile_id: { type: [integer, 'null'] }
@@ -1171,3 +1225,46 @@ components:
         lab_defaults: { $ref: '#/components/schemas/LabLimits' }
         approval_ttl_hours: { type: integer, minimum: 1, maximum: 168 }
         disabled_static_operations: { type: array, items: { type: string } }
+    IntakeOptions:
+      type: object
+      properties:
+        mine_history: { type: boolean, default: true }
+        history_depth: { type: integer, minimum: 10, maximum: 5000, default: 500 }
+        max_commits: { type: integer, minimum: 1, maximum: 40, default: 12, description: Fix candidates the Historian reads }
+        max_patterns: { type: integer, minimum: 1, maximum: 30, default: 8 }
+        max_tokens: { type: integer, minimum: 4000, maximum: 1000000, default: 150000, description: Historian output-token budget }
+        include_patterns: { type: array, items: { type: integer }, description: Existing patterns the run also hunts for }
+        limits: { $ref: '#/components/schemas/Limits' }
+    Intake:
+      type: object
+      properties:
+        id: { type: integer }
+        source_uri: { type: string }
+        source_ref: { type: string }
+        project_id: { type: integer }
+        project_name: { type: string }
+        target_id: { type: integer }
+        target_status: { type: string, enum: [pending, ready, unavailable, quarantined] }
+        revision: { type: string }
+        run_id: { type: [integer, 'null'] }
+        llm_profile_id: { type: [integer, 'null'] }
+        status: { type: string, enum: [fetching, mining, started, failed] }
+        options: { $ref: '#/components/schemas/IntakeOptions' }
+        commits_found: { type: integer }
+        commits_read: { type: integer }
+        patterns: { type: array, items: { type: integer } }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        error_summary: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CommitRecord:
+      type: object
+      properties:
+        sha: { type: string }
+        committed_at: { type: string, format: date-time }
+        subject: { type: string }
+        body: { type: string }
+        files: { type: array, items: { type: string } }
+        signals: { type: array, items: { type: string } }
+        score: { type: integer }

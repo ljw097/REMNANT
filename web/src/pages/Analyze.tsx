@@ -1,0 +1,376 @@
+// Repository intake: paste a repository URL; REMNANT fetches it with its
+// history, the Historian drafts root-cause patterns from past security
+// fixes, and a run hunts for the same mistakes in the current code.
+
+import { useEffect, useState } from "react";
+import { Frame } from "../App";
+import { post } from "../api/client";
+import type { Intake, IntakeDetail, IntakeOptions, LLMProfile, Pattern, Project } from "../api/types";
+import { useApi } from "../hooks";
+import { useI18n, type Key } from "../i18n";
+import { Link, navigate } from "../router";
+import { useSession } from "../session";
+import { Alert, Button, Empty, errorText, Field, Hash, PageHead, Panel, SkeletonRows, Time } from "../ui/components";
+import { Icon, type IconName } from "../ui/Icon";
+
+interface IntakeConfig {
+  repo_hosts: string[];
+  defaults: IntakeOptions;
+}
+
+export function AnalyzePage() {
+  const { t } = useI18n();
+  const { can } = useSession();
+  const cfg = useApi<IntakeConfig>("/intakes/config");
+  const recent = useApi<Intake[]>("/intakes", 5000);
+  const hostsOff = cfg.data && cfg.data.repo_hosts.length === 0;
+  return (
+    <Frame crumbs={[{ label: t("nav.analyze") }]}>
+      <PageHead title={t("analyze.title")} sub={t("analyze.sub")} />
+      <div className="stack" style={{ gap: 16 }}>
+        <ol className="flow-steps" aria-label={t("analyze.how")}>
+          {(["fetch", "history", "patterns", "hunt"] as const).map((s, i) => (
+            <li key={s}>
+              <span className="flow-no">{i + 1}</span>
+              <span>
+                <strong>{t(`analyze.step.${s}` as Key)}</strong>
+                <span className="small ink-2">{t(`analyze.step.${s}.what` as Key)}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        {hostsOff ? (
+          <Alert tone="warn" icon="lock">
+            {t("analyze.hostsOff")}
+          </Alert>
+        ) : null}
+        {cfg.data && !hostsOff && can("researcher") ? <IntakeForm cfg={cfg.data} /> : null}
+        <Panel title={t("analyze.recent")}>
+          {recent.loading && !recent.data ? (
+            <SkeletonRows rows={3} cols={3} />
+          ) : (recent.data ?? []).length === 0 ? (
+            <Empty title={t("analyze.noneTitle")} body={t("analyze.noneBody")} />
+          ) : (
+            <ul className="item-list">
+              {(recent.data ?? []).map((i) => (
+                <li key={i.id}>
+                  <Link to={`/analyze/${i.id}`}>
+                    <span className="t mono">{i.source_uri.replace(/^https:\/\//, "")}{i.source_ref ? `@${i.source_ref}` : ""}</span>
+                    <IntakeState intake={i} />
+                    <span className="m">
+                      <span className="ref">[I-{i.id}]</span>
+                      <span>{i.project_name}</span>
+                      {i.status !== "fetching" ? <span>{t("analyze.counts", { found: i.commits_found, patterns: i.patterns.length })}</span> : null}
+                      <Time iso={i.created_at} />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+    </Frame>
+  );
+}
+
+function IntakeForm({ cfg }: { cfg: IntakeConfig }) {
+  const { t } = useI18n();
+  const profiles = useApi<LLMProfile[]>("/llm-profiles");
+  const projects = useApi<Project[]>("/projects");
+  const patterns = useApi<Pattern[]>("/patterns");
+  const [url, setUrl] = useState("");
+  const [ref, setRef] = useState("");
+  const [projectID, setProjectID] = useState(0);
+  const [profileID, setProfileID] = useState(0);
+  const [opts, setOpts] = useState<IntakeOptions>(cfg.defaults);
+  const [advanced, setAdvanced] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!profileID && profiles.data?.length) setProfileID(profiles.data[0]!.id);
+  }, [profiles.data]);
+  const set = (p: Partial<IntakeOptions>) => setOpts((o) => ({ ...o, ...p }));
+  const usable = (patterns.data ?? []).filter((p) => p.validation_status !== "rejected");
+  const ok = url.trim().length > 3 && (opts.mine_history || opts.include_patterns.length > 0) && (profileID || projectID);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      const r = await post<Intake>("/intakes", {
+        url: url.trim(),
+        ref: ref.trim(),
+        project_id: projectID || null,
+        llm_profile_id: profileID || null,
+        options: opts,
+      });
+      navigate(`/analyze/${r.id}`);
+    } catch (err) {
+      setError(errorText(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title={t("analyze.form")} meta={t("analyze.hosts", { hosts: cfg.repo_hosts.join(", ") })}>
+      <form className="panel-body form-grid" onSubmit={submit}>
+        <Field label={t("analyze.url")} hint={t("analyze.urlHint")}>
+          {(id) => <input id={id} className="input mono input-lg" value={url} autoFocus spellCheck={false} placeholder="https://github.com/org/repo" onChange={(e) => setUrl(e.target.value)} />}
+        </Field>
+        <div className="form-grid two">
+          <Field label={t("analyze.ref")} hint={t("analyze.refHint")}>
+            {(id) => <input id={id} className="input mono" value={ref} spellCheck={false} placeholder="main" onChange={(e) => setRef(e.target.value)} />}
+          </Field>
+          <Field label={t("analyze.profile")} hint={(profiles.data ?? []).length === 0 ? t("analyze.noProfile") : t("analyze.profileHint")}>
+            {(id) => (
+              <select id={id} className="select" value={profileID} onChange={(e) => setProfileID(Number(e.target.value))}>
+                {projectID ? <option value={0}>{t("analyze.projectProfile")}</option> : null}
+                {(profiles.data ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.model})
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        </div>
+        <Field label={t("analyze.project")} hint={t("analyze.projectHint")}>
+          {(id) => (
+            <select id={id} className="select" value={projectID} onChange={(e) => setProjectID(Number(e.target.value))}>
+              <option value={0}>{t("analyze.newProject")}</option>
+              {(projects.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <label className="rule" style={{ border: "1px solid var(--rule)", borderRadius: 6 }}>
+          <input type="checkbox" checked={opts.mine_history} onChange={(e) => set({ mine_history: e.target.checked })} />
+          <span>
+            <strong>{t("analyze.mine")}</strong>
+            <span className="small ink-2">{t("analyze.mineHint")}</span>
+          </span>
+        </label>
+        <div>
+          <Button variant="ghost" size="sm" icon={advanced ? "chevronUp" : "chevronDown"} onClick={() => setAdvanced((a) => !a)}>
+            {t("analyze.advanced")}
+          </Button>
+        </div>
+        {advanced ? (
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="advanced-grid" style={{ padding: 0 }}>
+              <NumField label={t("analyze.depth")} hint={t("analyze.depthHint")} value={opts.history_depth} min={10} max={5000} onChange={(v) => set({ history_depth: v })} disabled={!opts.mine_history} />
+              <NumField label={t("analyze.commits")} hint={t("analyze.commitsHint")} value={opts.max_commits} min={1} max={40} onChange={(v) => set({ max_commits: v })} disabled={!opts.mine_history} />
+              <NumField label={t("analyze.maxPatterns")} hint={t("analyze.maxPatternsHint")} value={opts.max_patterns} min={1} max={30} onChange={(v) => set({ max_patterns: v })} disabled={!opts.mine_history} />
+              <NumField label={t("analyze.tokens")} hint={t("analyze.tokensHint")} value={opts.max_tokens} min={4000} max={1000000} step={10000} onChange={(v) => set({ max_tokens: v })} disabled={!opts.mine_history} />
+            </div>
+            <Field label={t("analyze.include")} hint={t("analyze.includeHint")}>
+              {(id) => (
+                <select
+                  id={id}
+                  className="select"
+                  multiple
+                  size={Math.min(6, Math.max(3, usable.length))}
+                  value={opts.include_patterns.map(String)}
+                  onChange={(e) => set({ include_patterns: [...e.target.selectedOptions].map((o) => Number(o.value)) })}
+                >
+                  {usable.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      [P-{p.id}] {p.title} ({p.language || "—"})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <p className="small muted">{t("analyze.limitsNote")}</p>
+          </div>
+        ) : null}
+        {!opts.mine_history && opts.include_patterns.length === 0 ? (
+          <Alert tone="warn" icon="alert">
+            {t("analyze.needPatterns")}
+          </Alert>
+        ) : null}
+        {error ? (
+          <Alert tone="bad" icon="alert">
+            {error}
+          </Alert>
+        ) : null}
+        <div>
+          <Button type="submit" variant="primary" size="lg" icon="play" loading={busy} disabled={!ok}>
+            {t("analyze.start")}
+          </Button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+function NumField({ label, hint, value, min, max, step = 1, onChange, disabled }: { label: string; hint: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void; disabled?: boolean }) {
+  return (
+    <Field label={label} hint={hint}>
+      {(id) => <input id={id} className="input" type="number" min={min} max={max} step={step} value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value) || min)} />}
+    </Field>
+  );
+}
+
+function IntakeState({ intake }: { intake: Intake }) {
+  const { t } = useI18n();
+  const look: Record<Intake["status"], [string, string]> = {
+    fetching: ["info", "live"],
+    mining: ["info", "live"],
+    started: ["ok", "solid"],
+    failed: ["bad", "stopped"],
+  };
+  const [tone, form] = look[intake.status];
+  return (
+    <span className="state" data-tone={tone} data-form={form}>
+      {t(`intake.status.${intake.status}` as Key)}
+    </span>
+  );
+}
+
+export function IntakePage({ id }: { id: number }) {
+  const { t } = useI18n();
+  const q = useApi<IntakeDetail>(`/intakes/${id}`, 2000);
+  const patterns = useApi<Pattern[]>("/patterns");
+  const d = q.data;
+  const i = d?.intake;
+  const steps: { key: string; icon: IconName; state: "done" | "active" | "todo" | "failed" | "skipped"; detail: React.ReactNode }[] = i
+    ? [
+        {
+          key: "fetch",
+          icon: "download",
+          state: i.target_status === "pending" ? (i.status === "failed" ? "failed" : "active") : i.target_status === "ready" ? "done" : "failed",
+          detail: i.revision ? <Hash value={i.revision} /> : t("intake.fetching"),
+        },
+        {
+          key: "history",
+          icon: "clock",
+          state: !i.options.mine_history ? "skipped" : i.target_status === "ready" ? "done" : i.status === "failed" ? "failed" : "todo",
+          detail: i.options.mine_history ? t("intake.found", { n: i.commits_found, depth: i.options.history_depth }) : t("intake.skipped"),
+        },
+        {
+          key: "patterns",
+          icon: "patterns",
+          state: !i.options.mine_history ? "skipped" : i.status === "mining" ? "active" : i.status === "started" ? "done" : i.status === "failed" && i.target_status === "ready" ? "failed" : "todo",
+          detail: i.options.mine_history ? t("intake.drafted", { read: i.commits_read, n: i.patterns.length, tokens: i.output_tokens.toLocaleString() }) : t("intake.skipped"),
+        },
+        {
+          key: "hunt",
+          icon: "runs",
+          state: i.run_id ? "done" : i.status === "failed" ? "failed" : "todo",
+          detail: i.run_id ? <Link to={`/runs/${i.run_id}`}>{t("intake.openRun", { id: i.run_id })}</Link> : t("intake.waiting"),
+        },
+      ]
+    : [];
+  const mined = (patterns.data ?? []).filter((p) => i?.patterns.includes(p.id));
+
+  return (
+    <Frame crumbs={[{ label: t("nav.analyze"), to: "/analyze" }, { label: `I-${id}` }]}>
+      {!d || !i ? (
+        q.error ? (
+          <Alert tone="bad">{errorText(q.error, t)}</Alert>
+        ) : (
+          <SkeletonRows rows={4} cols={2} />
+        )
+      ) : (
+        <div className="stack" style={{ gap: 16 }}>
+          <PageHead
+            title={<span className="mono">{i.source_uri.replace(/^https:\/\//, "")}{i.source_ref ? `@${i.source_ref}` : ""}</span>}
+            sub={
+              <>
+                <IntakeState intake={i} /> <Link to={`/projects/${i.project_id}`}>{i.project_name}</Link> · <Time iso={i.created_at} />
+              </>
+            }
+            actions={i.run_id ? <Button variant="primary" icon="arrowRight" onClick={() => navigate(`/runs/${i.run_id}`)}>{t("intake.openRun", { id: i.run_id })}</Button> : undefined}
+          />
+          {i.status === "failed" ? (
+            <Alert tone="bad" icon="alert">
+              {i.error_summary}
+            </Alert>
+          ) : null}
+          <Panel title={t("intake.progress")}>
+            <ol className="intake-steps">
+              {steps.map((s) => (
+                <li key={s.key} data-state={s.state}>
+                  <span className="seal">
+                    <Icon name={s.state === "done" ? "check" : s.state === "failed" ? "x" : s.icon} size={14} />
+                  </span>
+                  <span className="stack" style={{ gap: 2 }}>
+                    <strong>{t(`analyze.step.${s.key}` as Key)}</strong>
+                    <span className="small ink-2">{s.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </Panel>
+          {i.options.mine_history ? (
+            <Panel title={t("intake.patterns")} meta={t("intake.patternsSub")}>
+              {mined.length === 0 ? (
+                <Empty title={i.status === "mining" || i.status === "fetching" ? t("intake.patternsPending") : t("intake.noPatterns")} />
+              ) : (
+                <ul className="item-list">
+                  {mined.map((p) => (
+                    <li key={p.id}>
+                      <Link to={`/patterns/${p.id}`}>
+                        <span className="t">{p.title}</span>
+                        <span className="state" data-tone="muted" data-form="waiting">
+                          {t("patterns.kind.mined")}
+                        </span>
+                        <span className="m">
+                          <span className="ref">[P-{p.id}]</span>
+                          <span>
+                            {p.vulnerability_class}
+                            {p.cwe_id ? ` · ${p.cwe_id}` : ""}
+                          </span>
+                          {p.origin?.commit ? <span className="mono">{p.origin.commit.slice(0, 12)}</span> : null}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          ) : null}
+          {d.commits.length > 0 ? (
+            <Panel title={t("intake.commits")} meta={t("intake.commitsSub", { n: d.commits.length })}>
+              <ul className="item-list">
+                {d.commits.map((c, idx) => (
+                  <li key={c.id}>
+                    <div>
+                      <span className="t" style={{ whiteSpace: "normal" }}>
+                        {c.subject}
+                      </span>
+                      {idx < i.commits_read ? (
+                        <span className="state" data-tone="info" data-form="solid">
+                          {t("intake.read")}
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                      <span className="m">
+                        <span className="mono">{c.sha.slice(0, 12)}</span>
+                        <Time iso={c.committed_at} />
+                        {c.signals.map((s) => (
+                          <span key={s} className="chip">
+                            {t(`signal.${s}` as Key)}
+                          </span>
+                        ))}
+                        <span className="mono small">{c.files.slice(0, 3).join(", ")}{c.files.length > 3 ? ` +${c.files.length - 3}` : ""}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          ) : null}
+        </div>
+      )}
+    </Frame>
+  );
+}

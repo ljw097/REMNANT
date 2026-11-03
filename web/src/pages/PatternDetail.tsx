@@ -5,7 +5,7 @@ import { useApi, useUserNames } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { useSession } from "../session";
 import type { Hypothesis, Pattern } from "../api/types";
-import { Alert, Button, Empty, ErrorNote, errorText, Panel, SkeletonRows, State, Time, useToast } from "../ui/components";
+import { Alert, Button, Empty, ErrorNote, errorText, Hash, Panel, SkeletonRows, State, Time, useToast } from "../ui/components";
 import { Custody, DocHeader, SectionTitle } from "../ui/domain";
 import { patternLook } from "../ui/status";
 import { useColumns } from "../ui/ColumnPicker";
@@ -57,6 +57,19 @@ export function PatternDetailPage({ id }: { id: number }) {
               { label: t("targets.lang"), value: x.language || "—" },
               { label: t("patterns.kind"), value: t(`patterns.kind.${x.source_kind}` as Key) },
               { label: t("patterns.sourceRef"), value: x.source_ref ? <span style={{ overflowWrap: "anywhere" }}>{x.source_ref}</span> : "—" },
+              ...(x.origin?.commit
+                ? [
+                    {
+                      label: t("patterns.origin"),
+                      value: (
+                        <span className="stack" style={{ gap: 2 }}>
+                          <Hash value={x.origin.commit} />
+                          {x.origin.repository ? <span className="small mono">{x.origin.repository.replace(/^https:\/\//, "")}</span> : null}
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
           <div className="grid-12">

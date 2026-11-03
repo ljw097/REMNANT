@@ -56,6 +56,7 @@ type Orchestrator struct {
 	opts     Options
 	owner    string
 	fetching atomic.Bool
+	intaking atomic.Bool
 }
 
 func New(st *store.Store, cfg config.Config, log *slog.Logger, opts Options) *Orchestrator {
@@ -98,6 +99,7 @@ func (o *Orchestrator) Run(ctx context.Context) {
 		}
 		o.fill(ctx, sem, &wg)
 		o.startFetching(ctx, &wg)
+		o.startIntakes(ctx, &wg)
 		select {
 		case <-ctx.Done():
 			return
@@ -128,6 +130,28 @@ func (o *Orchestrator) fill(ctx context.Context, sem chan struct{}, wg *sync.Wai
 			o.work(ctx, id, status)
 		}()
 	}
+}
+
+// startIntakes moves repository intakes forward in the background, one at
+// a time, so a long history read never holds up runs.
+func (o *Orchestrator) startIntakes(ctx context.Context, wg *sync.WaitGroup) {
+	if !o.intaking.CompareAndSwap(false, true) {
+		return
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer o.intaking.Store(false)
+		for ctx.Err() == nil {
+			ok, err := o.IntakeOnce(ctx)
+			if err != nil && ctx.Err() == nil {
+				o.log.Error("repository intake", "err", err)
+			}
+			if !ok || err != nil {
+				return
+			}
+		}
+	}()
 }
 
 // startFetching pins pending git targets in the background, one at a time,
@@ -171,7 +195,8 @@ func (o *Orchestrator) FetchOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	log := o.log.With("target", t.ID, "source", t.SourceURI, "ref", t.SourceRef)
-	commit, digest, ferr := f.Fetch(ctx, t.SourceURI, t.SourceRef, t.SnapshotKey)
+	res, ferr := f.FetchHistory(ctx, t.SourceURI, t.SourceRef, t.SnapshotKey, t.HistoryDepth)
+	commit, digest := res.Commit, res.Digest
 	bg, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer done()
 	if ferr != nil {
@@ -181,7 +206,17 @@ func (o *Orchestrator) FetchOnce(ctx context.Context) (bool, error) {
 		log.Warn("target fetch failed", "err", ferr)
 		return true, o.store.FailFetch(bg, t.ID, o.owner, ferr.Error())
 	}
-	log.Info("target pinned", "commit", commit)
+	if len(res.History) > 0 {
+		recs := make([]store.CommitRecord, len(res.History))
+		for i, c := range res.History {
+			recs[i] = store.CommitRecord{SHA: c.SHA, CommittedAt: c.CommittedAt, Subject: c.Subject, Body: c.Body,
+				Files: c.Files, Diff: c.Diff, Signals: c.Signals, Score: c.Score}
+		}
+		if err := o.store.SaveCommitRecords(bg, t.ID, recs); err != nil {
+			return true, err
+		}
+	}
+	log.Info("target pinned", "commit", commit, "fix_candidates", len(res.History))
 	return true, o.store.CompleteFetch(bg, t.ID, o.owner, commit, digest)
 }
 

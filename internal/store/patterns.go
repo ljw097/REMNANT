@@ -7,7 +7,7 @@ import (
 
 const patternCols = `id, parent_pattern_id, source_kind, source_ref, title, vulnerability_class, cwe_id,
 	language, root_cause, preconditions, lifecycle_points, code_signatures, counter_signatures,
-	patch_semantics, version, validation_status, created_by, reviewed_by, reviewed_at, created_at, self_reviewed`
+	patch_semantics, version, validation_status, created_by, reviewed_by, reviewed_at, created_at, self_reviewed, origin`
 
 type PatternInput struct {
 	SourceKind         string
@@ -22,21 +22,26 @@ type PatternInput struct {
 	CodeSignatures     []string
 	CounterSignatures  []string
 	PatchSemantics     map[string]any
+	// Origin is recorded for mined patterns.
+	Origin map[string]any
 }
 
 func (s *Store) CreatePattern(ctx context.Context, in PatternInput, createdBy int64) (Pattern, error) {
 	if in.PatchSemantics == nil {
 		in.PatchSemantics = map[string]any{}
 	}
+	if in.Origin == nil {
+		in.Origin = map[string]any{}
+	}
 	p, err := one[Pattern](s.pool.Query(ctx, `
 		INSERT INTO patterns(source_kind, source_ref, title, vulnerability_class, cwe_id, language,
 		                     root_cause, preconditions, lifecycle_points, code_signatures,
-		                     counter_signatures, patch_semantics, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		                     counter_signatures, patch_semantics, created_by, origin)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING `+patternCols,
 		in.SourceKind, in.SourceRef, in.Title, in.VulnerabilityClass, in.CWEID, in.Language,
 		in.RootCause, nonNil(in.Preconditions), nonNil(in.LifecyclePoints), nonNil(in.CodeSignatures),
-		nonNil(in.CounterSignatures), in.PatchSemantics, createdBy))
+		nonNil(in.CounterSignatures), in.PatchSemantics, createdBy, in.Origin))
 	return p, mapErr(err)
 }
 

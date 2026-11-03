@@ -104,7 +104,7 @@ export interface Target {
 
 export interface Pattern {
   id: number;
-  source_kind: "historical" | "validated_internal" | "researcher_authored";
+  source_kind: "historical" | "validated_internal" | "researcher_authored" | "mined";
   source_ref: string;
   title: string;
   vulnerability_class: string;
@@ -122,6 +122,8 @@ export interface Pattern {
   reviewed_at: string | null;
   created_at: string;
   self_reviewed: boolean;
+  /** Where a mined pattern came from; {} for others. */
+  origin: { repository?: string; commit?: string; committed_at?: string; subject?: string; signals?: string[] };
 }
 
 export interface Run {
@@ -409,4 +411,56 @@ export interface UserRef {
   /** Requested on the sign-in page; waits for an administrator. */
   pending: boolean;
   has_password: boolean;
+}
+
+export interface IntakeOptions {
+  mine_history: boolean;
+  history_depth: number;
+  max_commits: number;
+  max_patterns: number;
+  max_tokens: number;
+  include_patterns: number[];
+}
+
+export type IntakeStatus = "fetching" | "mining" | "started" | "failed";
+
+export interface Intake {
+  id: number;
+  source_uri: string;
+  source_ref: string;
+  project_id: number;
+  project_name: string;
+  target_id: number;
+  target_status: "pending" | "ready" | "unavailable" | "quarantined";
+  revision: string;
+  run_id: number | null;
+  llm_profile_id: number | null;
+  status: IntakeStatus;
+  options: IntakeOptions;
+  commits_found: number;
+  commits_read: number;
+  patterns: number[];
+  input_tokens: number;
+  output_tokens: number;
+  error_summary: string;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommitRecord {
+  id: number;
+  sha: string;
+  committed_at: string;
+  subject: string;
+  body: string;
+  files: string[];
+  signals: string[];
+  score: number;
+}
+
+export interface IntakeDetail {
+  intake: Intake;
+  commits: CommitRecord[];
+  repo_hosts: string[];
 }

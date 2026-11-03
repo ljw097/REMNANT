@@ -308,7 +308,7 @@ check "profile bad options" 400 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"option
 check "profile key rotation" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"api_key":"sk-ant-rotated-99999999"}')"; check "rotated hint" "…9999" "$(j "['api_key_hint']")"
 check "rotated key works" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
 check "delete profile in use" 409 "$(req $ADMIN DELETE /llm-profiles/$LLM)"
-check "agents" 200 "$(req $RES GET /agents)"; check "two agents" 2 "$(j ".__len__()")"
+check "agents" 200 "$(req $RES GET /agents)"; check "three agents" 3 "$(j ".__len__()")"
 check "agent by researcher" 403 "$(req $RES PATCH /agents/skeptic '{"enabled":false}')"
 check "agent instructions" 200 "$(req $ADMIN PATCH /agents/hypothesis_researcher '{"config":{"instructions":"Prefer length arithmetic.","max_call_tokens":4096}}')"
 check "agent bad cap" 400 "$(req $ADMIN PATCH /agents/skeptic '{"config":{"max_call_tokens":10}}')"
@@ -326,6 +326,14 @@ RUN5=$(j "['id']"); req $RES POST /runs/$RUN5/cancel >/dev/null
 check "system config" 200 "$(req $ADMIN GET /system/config)"; check "key source" environment "$(j "['master_key_source']")"
 check "no secrets in config" 0 "$(grep -c "$REMNANT_MASTER_KEY" $SP/body)"
 check "system config by researcher" 403 "$(req $RES GET /system/config)"
+
+# Repository intake. The smoke server allows no remote hosts, so intakes are
+# refused with the reason; the end-to-end path is covered by the Go tests.
+check "intake config" 200 "$(req $RES GET /intakes/config)"; check "no repo hosts" "[]" "$(j "['repo_hosts']")"
+check "intake refused without hosts" 403 "$(req $RES POST /intakes '{"url":"github.com/org/repo"}')"; check "intake reason" source_policy "$(j "['code']")"
+check "intake by reviewer" 403 "$(req $REV POST /intakes '{"url":"github.com/org/repo"}')"
+check "intakes list" 200 "$(req $RES GET /intakes)"; check "no intakes" 0 "$(j ".__len__()")"
+check "historian agent" 200 "$(req $ADMIN PATCH /agents/historian '{"config":{"instructions":"Ignore test-only commits."}}')"
 
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
 
