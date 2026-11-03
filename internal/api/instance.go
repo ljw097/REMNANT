@@ -99,7 +99,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	pol, _ := s.store.Policy(r.Context())
 	s.log.Info("first-run setup completed", "profile", pol.Profile, "admin", u.Username)
-	p, ok := s.startSession(w, r, in.Username, in.Password)
+	p, ok := s.startSession(w, r, in.Username, in.Password, true)
 	if !ok {
 		return
 	}

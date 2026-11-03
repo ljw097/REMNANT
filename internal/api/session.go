@@ -17,6 +17,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -29,7 +30,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", store.ErrLogin.Error())
 		return
 	}
-	p, ok := s.startSession(w, r, strings.ToLower(strings.TrimSpace(in.Username)), in.Password)
+	p, ok := s.startSession(w, r, strings.ToLower(strings.TrimSpace(in.Username)), in.Password, in.Remember)
 	if !ok {
 		return
 	}
@@ -38,8 +39,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 // startSession signs a user in and sets the cookie. It writes the error
 // response itself when it fails.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, username, password string) (auth.Principal, bool) {
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, username, password string, remember bool) (auth.Principal, bool) {
+	// "Keep me signed in" makes the session last until its 30-day maximum
+	// without re-login; otherwise it idles out per the instance policy.
 	idle := time.Duration(s.policy(r).SessionHours) * time.Hour
+	if remember {
+		idle = store.SessionMaxAge
+	}
 	p, token, err := s.store.Login(r.Context(), username, password, r.UserAgent(), idle)
 	switch {
 	case errors.Is(err, store.ErrLogin):

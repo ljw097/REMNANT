@@ -963,6 +963,7 @@ const en: Record<keyof typeof ko, string> = {
   "patterns.filter.reviewed": "Reviewed",
   "patterns.filter.unreviewed": "Unreviewed",
   "patterns.filter.mined": "Mined",
+  "signin.remember": "Keep me signed in",
 };
 
 export default en;

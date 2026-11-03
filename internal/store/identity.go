@@ -97,8 +97,8 @@ const (
 	// loginLockout.
 	maxLoginFailures = 10
 	loginLockout     = 15 * time.Minute
-	// sessionMaxAge bounds a session however active it stays.
-	sessionMaxAge = 30 * 24 * time.Hour
+	// SessionMaxAge bounds a session however active it stays.
+	SessionMaxAge = 30 * 24 * time.Hour
 )
 
 // Login checks a username and password and opens a browser session that
@@ -163,7 +163,7 @@ func (s *Store) Login(ctx context.Context, username, password, userAgent string,
 		return tx.QueryRow(ctx, `
 			INSERT INTO sessions(user_id, token_sha256, expires_at, idle_seconds, user_agent)
 			VALUES ($1, $2, now() + $3::interval, $4, $5) RETURNING id`,
-			p.UserID, digest, sessionMaxAge.String(), int(idle.Seconds()), userAgent).Scan(&p.SessionID)
+			p.UserID, digest, SessionMaxAge.String(), int(idle.Seconds()), userAgent).Scan(&p.SessionID)
 	})
 	if err != nil {
 		return auth.Principal{}, "", err

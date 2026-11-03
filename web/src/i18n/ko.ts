@@ -963,6 +963,7 @@ const ko = {
   "patterns.filter.reviewed": "검토됨",
   "patterns.filter.unreviewed": "미검토",
   "patterns.filter.mined": "히스토리 추출",
+  "signin.remember": "로그인 유지",
 } as const satisfies Record<string, string>;
 
 export default ko;
