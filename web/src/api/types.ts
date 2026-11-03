@@ -295,7 +295,7 @@ export interface RunEvent {
 export interface LLMProfile {
   id: number;
   name: string;
-  provider: "anthropic";
+  provider: "anthropic" | "openai";
   base_url: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";

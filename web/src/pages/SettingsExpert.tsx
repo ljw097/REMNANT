@@ -9,7 +9,23 @@ import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Alert, Button, ConfirmButton, Drawer, Empty, errorText, Field, Panel, SkeletonRows, Time, useToast } from "../ui/components";
 
-const modelSuggestions = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
+type Provider = "anthropic" | "openai";
+const providers: Provider[] = ["anthropic", "openai"];
+
+// Per-provider model suggestions, a sensible default model, and the base URL
+// and key-hint shown as placeholders. The model field stays free text.
+const providerInfo: Record<Provider, { models: string[]; baseUrl: string; keyHint: string }> = {
+  anthropic: {
+    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
+    baseUrl: "https://api.anthropic.com",
+    keyHint: "sk-ant-…",
+  },
+  openai: {
+    models: ["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
+    baseUrl: "https://api.openai.com/v1",
+    keyHint: "sk-…",
+  },
+};
 const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /* ---------- Model profiles ---------- */
@@ -64,7 +80,7 @@ export function ModelsSection() {
                   <div className="stack" style={{ gap: 2, minWidth: 0 }}>
                     <strong>{p.name}</strong>
                     <span className="small ink-2">
-                      <span className="mono">{p.model}</span> · {t("models.effort")} {p.effort}
+                      {t(`models.provider.${p.provider}` as Key)} · <span className="mono">{p.model}</span> · {t("models.effort")} {p.effort}
                       {p.options?.thinking ? ` · ${t(`models.thinking.${p.options.thinking}` as Key)}` : ""}
                       {p.base_url ? (
                         <>
@@ -133,14 +149,15 @@ function CheckResult({ check }: { check: ProfileCheck }) {
   );
 }
 
-type ModelDraft = { name: string; model: string; effort: string; base_url: string; api_key: string; thinking: ModelOptions["thinking"]; timeout: string; retries: string };
+type ModelDraft = { name: string; provider: Provider; model: string; effort: string; base_url: string; api_key: string; thinking: ModelOptions["thinking"]; timeout: string; retries: string };
 
-const blankModel: ModelDraft = { name: "", model: "claude-opus-5-5", effort: "high", base_url: "", api_key: "", thinking: "adaptive", timeout: "", retries: "" };
+const blankModel: ModelDraft = { name: "", provider: "anthropic", model: "claude-opus-5-5", effort: "high", base_url: "", api_key: "", thinking: "adaptive", timeout: "", retries: "" };
 
 function draftOf(p: LLMProfile | null): ModelDraft {
   if (!p) return blankModel;
   return {
     name: p.name,
+    provider: p.provider,
     model: p.model,
     effort: p.effort,
     base_url: p.base_url,
@@ -181,7 +198,7 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
   const test = async () => {
     setCheck("busy");
     try {
-      setCheck(await post<ProfileCheck>("/llm-profiles/test", { provider: "anthropic", model: f.model, base_url: f.base_url, api_key: f.api_key, options: optionsOf(f) }));
+      setCheck(await post<ProfileCheck>("/llm-profiles/test", { provider: f.provider, model: f.model, base_url: f.base_url, api_key: f.api_key, options: optionsOf(f) }));
     } catch (e) {
       setCheck({ ok: false, error: errorText(e, t) });
     }
@@ -197,7 +214,7 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
         await patch(`/llm-profiles/${profile.id}`, f.api_key ? { ...body, api_key: f.api_key } : body);
         toast(f.api_key ? t("models.savedKey") : t("models.saved"));
       } else {
-        await post("/llm-profiles", { ...body, provider: "anthropic", api_key: f.api_key });
+        await post("/llm-profiles", { ...body, provider: f.provider, api_key: f.api_key });
         toast(t("models.created"));
       }
       onSaved();
@@ -226,13 +243,35 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
       <form id="model-form" className="form-grid" onSubmit={submit}>
         <Alert icon="lock">{t("models.keyNote")}</Alert>
         <Field label={t("models.name")}>{(id) => <input id={id} className="input" value={f.name} maxLength={120} onChange={(e) => set({ name: e.target.value })} />}</Field>
+        <Field label={t("models.provider")} hint={t("models.providerHint")}>
+          {(id) => (
+            <select
+              id={id}
+              className="select"
+              value={f.provider}
+              onChange={(e) => {
+                const provider = e.target.value as Provider;
+                // Swap the default model when it is still the other provider's
+                // default, so the field stays sensible; keep a custom model.
+                const wasDefault = providers.some((p) => p !== provider && providerInfo[p].models[0] === f.model);
+                set(wasDefault ? { provider, model: providerInfo[provider].models[0] } : { provider });
+              }}
+            >
+              {providers.map((p) => (
+                <option key={p} value={p}>
+                  {t(`models.provider.${p}` as Key)}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
         <div className="form-grid two">
-          <Field label={t("models.model")} hint={t("models.modelHint")}>
+          <Field label={t("models.model")} hint={t(`models.modelHint.${f.provider}` as Key)}>
             {(id) => (
               <>
                 <input id={id} className="input mono" list="model-suggestions" value={f.model} maxLength={200} spellCheck={false} onChange={(e) => set({ model: e.target.value })} />
                 <datalist id="model-suggestions">
-                  {modelSuggestions.map((m) => (
+                  {providerInfo[f.provider].models.map((m) => (
                     <option key={m} value={m} />
                   ))}
                 </datalist>
@@ -252,10 +291,10 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
           </Field>
         </div>
         <Field label={profile ? t("models.replaceKey") : t("models.key")} hint={profile ? t("models.replaceKeyHint", { hint: profile.api_key_hint || "—" }) : t("models.keyHint")}>
-          {(id) => <input id={id} className="input mono" type="password" autoComplete="off" spellCheck={false} value={f.api_key} placeholder={profile ? profile.api_key_hint : "sk-ant-…"} onChange={(e) => set({ api_key: e.target.value })} />}
+          {(id) => <input id={id} className="input mono" type="password" autoComplete="off" spellCheck={false} value={f.api_key} placeholder={profile ? profile.api_key_hint : providerInfo[f.provider].keyHint} onChange={(e) => set({ api_key: e.target.value })} />}
         </Field>
         <Field label={t("models.baseUrl")} hint={t("models.baseUrlHint")}>
-          {(id) => <input id={id} className="input mono" type="url" value={f.base_url} placeholder="https://api.anthropic.com" onChange={(e) => set({ base_url: e.target.value })} />}
+          {(id) => <input id={id} className="input mono" type="url" value={f.base_url} placeholder={providerInfo[f.provider].baseUrl} onChange={(e) => set({ base_url: e.target.value })} />}
         </Field>
 
         <fieldset className="rules">
