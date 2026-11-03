@@ -86,6 +86,22 @@ func (j *job) research(parent context.Context) (err error) {
 			return err
 		}
 	}
+	if scope.Run.Auto {
+		// Autopilot: reach review_required, then triage the hypotheses and
+		// move to report_ready, which the orchestrator claims and renders.
+		// Lab experiments are not run here — code execution still needs a
+		// person's approval.
+		if err := j.advance(ctx, research.RunReviewRequired, "Automatic analysis finished"); err != nil {
+			return err
+		}
+		res, err := j.o.store.AutoTriage(ctx, j.runID)
+		if err != nil {
+			return err
+		}
+		j.event(ctx, "run.autopiloted", fmt.Sprintf("Autopilot accepted %d and rejected %d hypotheses", res.Accepted, res.Rejected),
+			map[string]any{"accepted": res.Accepted, "rejected": res.Rejected})
+		return nil
+	}
 	return j.advance(ctx, research.RunReviewRequired, "Automatic analysis finished; hypotheses await review")
 }
 

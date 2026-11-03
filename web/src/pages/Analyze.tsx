@@ -156,6 +156,13 @@ function IntakeForm({ cfg }: { cfg: IntakeConfig }) {
             <span className="small ink-2">{t("analyze.mineHint")}</span>
           </span>
         </label>
+        <label className="rule" style={{ border: "1px solid var(--rule)", borderRadius: 6 }}>
+          <input type="checkbox" checked={opts.auto} onChange={(e) => set({ auto: e.target.checked })} />
+          <span>
+            <strong>{t("analyze.auto")}</strong>
+            <span className="small ink-2">{t("analyze.autoHint")}</span>
+          </span>
+        </label>
         <div>
           <Button variant="ghost" size="sm" icon={advanced ? "chevronUp" : "chevronDown"} onClick={() => setAdvanced((a) => !a)}>
             {t("analyze.advanced")}

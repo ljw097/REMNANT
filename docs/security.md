@@ -51,6 +51,12 @@ The web UI is served with a strict Content-Security-Policy (same-origin scripts,
 - Commit messages and diffs are untrusted. The Historian receives them as data in its task envelope under rules that tell it to ignore instructions inside; its answer is schema-checked, and its code signatures are kept only if they appear on the pre-fix side of the diff, so a pattern cannot point at invented code.
 - Mined patterns are recorded with `source_kind = mined`, the commit they came from, and `unreviewed` status; they feed a run like any other pattern, and their hypotheses go through the same triage and approval rules.
 
+## Autopilot and reporting
+
+- An autopilot run triages its own hypotheses and finalises a report without a person. Each machine decision is stored with `auto_triaged = true` and no `reviewed_by`, and a database CHECK forbids a person-less triage that is not marked automatic, so the record never reads as a human decision. Autopilot never runs code: lab experiments (dynamic validation) still need a person's approval, and findings it did not confirm by running code are marked **candidate**.
+- The Reporter agent writes the narrative report and the disclosure draft. It receives the run's structured findings as untrusted data under rules that forbid inventing facts, writing exploit code, or claiming a person wrote the report. The factual, deterministic report (every hypothesis, evidence excerpt with content hash, and experiment) is always kept as an appendix, and a provenance line stating that the report was produced by an automated tool and is pending human review is appended by code, not by the model, so it is always present and truthful.
+- REMNANT drafts the disclosure; it never sends anything. A person reviews and sends it.
+
 ## Worker isolation
 
 Implemented by `internal/sandbox` (bwrap inside a systemd user cgroup scope); see `worker-protocol.md`. In short: read-only source mount, write-only output directory, no network at the namespace level, non-root, dropped capabilities, seccomp/AppArmor, PID/CPU/memory/time limits, no container-runtime socket, no host home directories, SSH agents, cloud credentials, browser profiles, or REMNANT configuration and secrets. Everything a worker returns is validated before it is stored.

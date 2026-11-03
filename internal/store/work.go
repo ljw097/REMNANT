@@ -389,8 +389,8 @@ const agentCols = `role, display_name, enabled, llm_profile_id, config, updated_
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	return collect[Agent](s.pool.Query(ctx, `
 		SELECT `+agentCols+` FROM agent_profiles
-		WHERE role IN ('historian', 'hypothesis_researcher', 'skeptic')
-		ORDER BY array_position(ARRAY['historian','hypothesis_researcher','skeptic'], role)`))
+		WHERE role IN ('historian', 'hypothesis_researcher', 'skeptic', 'reporter')
+		ORDER BY array_position(ARRAY['historian','hypothesis_researcher','skeptic','reporter'], role)`))
 }
 
 // AgentPatch changes an agent. ClearProfile makes it use the run's model

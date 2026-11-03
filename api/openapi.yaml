@@ -186,7 +186,7 @@ paths:
       responses:
         '200': { description: Agents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Agent' } } } } }
   /agents/{role}:
-    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [historian, hypothesis_researcher, skeptic] } }]
+    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [historian, hypothesis_researcher, skeptic, reporter] } }]
     patch:
       summary: Change an agent (admin)
       description: llm_profile_id 0 returns the agent to the run's profile. Instructions are added after the agent's rules and cannot override them.
@@ -976,6 +976,7 @@ components:
         pattern_ids: { type: array, maxItems: 100, items: { type: integer, format: int64 } }
         llm_profile_id: { type: integer, format: int64, description: Defaults to the project's profile }
         limits: { $ref: '#/components/schemas/Limits' }
+        auto: { type: boolean, default: false, description: Run on autopilot (triage and report without a person; lab experiments still need approval) }
     Run:
       type: object
       properties:
@@ -986,6 +987,7 @@ components:
         limits: { $ref: '#/components/schemas/Limits' }
         policy: { $ref: '#/components/schemas/Policy' }
         scope_hash: { type: string }
+        auto: { type: boolean, description: Autopilot — triages its own hypotheses and finalises the report without a person }
         llm_profile_id: { type: [integer, 'null'] }
         started_by: { type: [integer, 'null'] }
         error_summary: { type: string }
@@ -1209,7 +1211,7 @@ components:
     Agent:
       type: object
       properties:
-        role: { type: string, enum: [historian, hypothesis_researcher, skeptic] }
+        role: { type: string, enum: [historian, hypothesis_researcher, skeptic, reporter] }
         display_name: { type: string }
         enabled: { type: boolean }
         llm_profile_id: { type: [integer, 'null'] }
@@ -1228,6 +1230,7 @@ components:
     IntakeOptions:
       type: object
       properties:
+        auto: { type: boolean, default: true, description: Autopilot — triage hypotheses and write the report without a person }
         mine_history: { type: boolean, default: true }
         history_depth: { type: integer, minimum: 10, maximum: 5000, default: 500 }
         max_commits: { type: integer, minimum: 1, maximum: 40, default: 12, description: Fix candidates the Historian reads }

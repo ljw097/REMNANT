@@ -25,6 +25,7 @@ export function NewRunPage() {
   const [workers, setWorkers] = useState(2);
   const [wall, setWall] = useState(900);
   const [tokens, setTokens] = useState(200000);
+  const [auto, setAuto] = useState(false);
   // Start from the instance's run defaults (Settings → Expert settings).
   const research = useApi<ResearchSettingsResponse>("/settings/research");
   useEffect(() => {
@@ -75,6 +76,7 @@ export function NewRunPage() {
         pattern_ids: patternIds,
         llm_profile_id: profileId === "" ? undefined : profileId,
         limits: { max_workers: workers, wall_seconds: wall, max_tokens: tokens },
+        auto,
       });
       navigate(`/runs/${run.id}`);
     } catch (e) {
@@ -217,6 +219,13 @@ export function NewRunPage() {
               <Field label={t("newRun.tokens")} hint={t("newRun.tokensHint")}>
                 {(id) => <input id={id} className="input" type="number" min={4000} max={2000000} step={10000} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 200000)} />}
               </Field>
+              <label className="rule" style={{ gridColumn: "1 / -1", border: "1px solid var(--rule)", borderRadius: 6 }}>
+                <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+                <span>
+                  <strong>{t("newRun.auto")}</strong>
+                  <span className="small ink-2">{t("newRun.autoHint")}</span>
+                </span>
+              </label>
             </div>
           </Panel>
         </div>

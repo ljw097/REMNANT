@@ -16,6 +16,20 @@ import (
 	"github.com/ljw097/remnant/internal/store"
 )
 
+// intakeRepository returns the repository URL a run analyses, when its only
+// target was taken in from a repository (so the report can name it).
+func intakeRepository(rep store.RunReport) string {
+	for _, p := range rep.Patterns {
+		var origin struct {
+			Repository string `json:"repository"`
+		}
+		if json.Unmarshal(p.Origin, &origin) == nil && origin.Repository != "" {
+			return origin.Repository
+		}
+	}
+	return ""
+}
+
 const reportLimitations = "Hypotheses are model-generated from heuristic source matching and are not findings until validated. " +
 	"A crash or sanitizer report is an observation, not proof of exploitability. " +
 	"Regions that matched no pattern signature were not examined."
@@ -28,9 +42,20 @@ func (j *job) report(ctx context.Context) error {
 		return err
 	}
 	generated := time.Now().UTC()
-	body, err := json.MarshalIndent(map[string]any{
-		"report_version": 1, "generated_at": generated, "limitations": reportLimitations, "report": rep,
-	}, "", "  ")
+	repo := intakeRepository(rep)
+	// The Reporter writes the narrative and the disclosure draft; it is best
+	// effort, so the report is always produced even if the model is off.
+	narrative := j.writeNarrative(ctx, rep, repo)
+
+	reportMeta := map[string]any{
+		"report_version": 2, "generated_at": generated, "limitations": reportLimitations, "report": rep,
+	}
+	markdown := renderMarkdown(rep, generated)
+	if narrative != nil {
+		reportMeta["narrative"] = narrative
+		markdown = renderNarrativeMarkdown(rep, *narrative, generated, repo)
+	}
+	body, err := json.MarshalIndent(reportMeta, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -38,12 +63,20 @@ func (j *job) report(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mdArt, err := j.writeArtifact(ctx, "report", fmt.Sprintf("remnant-run-%d.md", j.runID), "text/markdown; charset=utf-8",
-		[]byte(renderMarkdown(rep, generated)))
+	mdArt, err := j.writeArtifact(ctx, "report", fmt.Sprintf("remnant-run-%d.md", j.runID), "text/markdown; charset=utf-8", []byte(markdown))
 	if err != nil {
 		return err
 	}
-	j.event(ctx, "report.generated", "Report generated", map[string]any{"artifact_ids": []int64{jsonArt.ID, mdArt.ID}})
+	artifactIDs := []int64{jsonArt.ID, mdArt.ID}
+	if narrative != nil {
+		discArt, err := j.writeArtifact(ctx, "disclosure", fmt.Sprintf("remnant-run-%d-disclosure.md", j.runID),
+			"text/markdown; charset=utf-8", []byte(renderDisclosure(rep, *narrative, repo)))
+		if err != nil {
+			return err
+		}
+		artifactIDs = append(artifactIDs, discArt.ID)
+	}
+	j.event(ctx, "report.generated", "Report generated", map[string]any{"artifact_ids": artifactIDs, "narrative": narrative != nil})
 	return j.advance(ctx, research.RunCompleted, "Run completed")
 }
 

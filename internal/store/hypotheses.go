@@ -14,7 +14,7 @@ import (
 
 const hypothesisCols = `h.id, h.run_id, h.target_id, h.pattern_id, h.title, h.claim, h.vulnerability_class,
 	h.cwe_id, h.status, h.triage_confidence, h.skeptic_verdict, h.facts, h.preconditions, h.unknowns, h.affected_symbols,
-	h.expected_observation, h.counter_evidence, h.reviewer_note, h.reviewed_by, h.reviewed_at,
+	h.expected_observation, h.counter_evidence, h.reviewer_note, h.reviewed_by, h.reviewed_at, h.auto_triaged,
 	(SELECT count(*) FROM evidence e WHERE e.hypothesis_id = h.id) AS evidence_count,
 	h.created_at, h.updated_at`
 

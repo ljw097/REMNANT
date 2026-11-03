@@ -215,6 +215,23 @@ func (f *fakeModel) CompleteJSON(ctx context.Context, req llm.Request) (llm.Resp
 		return llm.Response{}, errors.New("401 invalid x-api-key")
 	}
 	_, body, _ := strings.Cut(req.Input, "\n\n")
+	if req.AgentKey == roleReporter {
+		var env reporterEnvelope
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			return llm.Response{}, fmt.Errorf("bad reporter envelope: %v", err)
+		}
+		out := map[string]any{"executive_summary": "Synthetic report over " + fmt.Sprint(len(env.Findings)) + " finding(s).",
+			"overall_severity": "medium", "disclosure_subject": "Possible issue", "disclosure_body": "Please review.",
+			"caveats": []string{"synthetic"}, "findings": []map[string]any{}}
+		var fs []map[string]any
+		for _, f := range env.Findings {
+			fs = append(fs, map[string]any{"hypothesis_id": f.ID, "severity": "medium", "summary": "Candidate " + f.Claim,
+				"impact": "may be reachable", "remediation": "add the check"})
+		}
+		out["findings"] = fs
+		j, _ := json.Marshal(out)
+		return llm.Response{InputTokens: 500, OutputTokens: 150, JSON: j}, nil
+	}
 	if req.AgentKey == roleHistorian {
 		var env historianEnvelope
 		if err := json.Unmarshal([]byte(body), &env); err != nil {
@@ -398,7 +415,7 @@ func TestFullLifecycle(t *testing.T) {
 		if hex.EncodeToString(sum[:]) != a.SHA256 || int64(len(data)) != a.SizeBytes {
 			t.Errorf("artifact %s content does not match its digest", a.Name)
 		}
-		if strings.HasSuffix(a.Name, ".md") {
+		if a.ArtifactKind == "report" && strings.HasSuffix(a.Name, ".md") {
 			md = string(data)
 		}
 	}
@@ -1055,7 +1072,7 @@ func TestAgentAndResearchSettings(t *testing.T) {
 	e := setup(t)
 	agents, err := e.st.ListAgents(e.ctx)
 	must(t, err)
-	if len(agents) != 3 || agents[0].Role != "historian" || agents[1].Role != "hypothesis_researcher" || agents[2].Role != "skeptic" {
+	if len(agents) != 4 || agents[0].Role != "historian" || agents[1].Role != "hypothesis_researcher" || agents[2].Role != "skeptic" || agents[3].Role != "reporter" {
 		t.Fatalf("agents = %+v", agents)
 	}
 	_, err = e.st.UpdateAgent(e.ctx, "hypothesis_researcher", store.AgentPatch{Config: &store.AgentConfig{Instructions: "Prefer integer overflow leads.", MaxCallTokens: 3000}})
@@ -1301,5 +1318,69 @@ func TestMinedPatternValidation(t *testing.T) {
 		if _, err := minedPattern(bad, c, "https://h/r"); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// Autopilot: a run triages its own hypotheses, the Reporter writes the
+// report and disclosure, and the run completes without a person.
+func TestAutopilot(t *testing.T) {
+	e := setup(t)
+	m := &fakeModel{}
+	o := e.orchestrator(m, nil)
+	run, err := e.st.CreateRun(e.ctx, store.RunInput{ProjectID: e.projectID, TargetIDs: []int64{e.targetID},
+		PatternIDs: []int64{e.patternID}, Limits: research.Limits{MaxWorkers: 2, WallSeconds: 120, MaxTokens: 200000}, Auto: true}, e.alice)
+	must(t, err)
+
+	// Automatic analysis then auto-triage move the run to report_ready.
+	e.runOnce(o)
+	if st, msg := e.status(run.ID); st != research.RunReportReady {
+		t.Fatalf("after analysis: %s %s", st, msg)
+	}
+	hs, _ := e.st.ListHypotheses(e.ctx, run.ID)
+	var accepted, triaged int
+	for _, h := range hs {
+		if h.Status == "accepted" {
+			accepted++
+		}
+		if h.AutoTriaged {
+			triaged++
+		}
+		if h.ReviewedBy != nil {
+			t.Error("auto-triaged hypothesis has a reviewer")
+		}
+	}
+	if accepted == 0 || triaged != len(hs) {
+		t.Fatalf("accepted=%d auto_triaged=%d of %d", accepted, triaged, len(hs))
+	}
+
+	// The report stage runs the Reporter and completes the run.
+	e.runOnce(o)
+	if st, msg := e.status(run.ID); st != research.RunCompleted {
+		t.Fatalf("after report: %s %s", st, msg)
+	}
+	if m.count(roleReporter) != 1 {
+		t.Fatalf("reporter called %d times", m.count(roleReporter))
+	}
+	arts, err := e.st.ListArtifacts(e.ctx, run.ID)
+	must(t, err)
+	kinds := map[string]string{}
+	for _, a := range arts {
+		kinds[a.ArtifactKind] = a.Name
+	}
+	if kinds["disclosure"] == "" {
+		t.Fatalf("no disclosure artifact: %v", kinds)
+	}
+	var mdKey string
+	for _, a := range arts {
+		if a.ArtifactKind == "report" && strings.HasSuffix(a.Name, ".md") {
+			mdKey = a.StorageKey
+		}
+	}
+	md, err := os.ReadFile(filepath.Join(e.cfg.ArtifactDir(), filepath.FromSlash(mdKey)))
+	must(t, err)
+	body := string(md)
+	if !strings.Contains(body, "Security review") || !strings.Contains(body, "candidate") || !strings.Contains(body, "Prepared by REMNANT") ||
+		!strings.Contains(body, "Appendix: full technical detail") {
+		t.Fatalf("narrative report missing expected sections:\n%s", body[:min(600, len(body))])
 	}
 }
