@@ -27,6 +27,8 @@ It does **not** scan arbitrary hosts, run remote exploits, open shells, collect 
 | Sandboxed worker runtime (`remnant-worker` in bwrap + user cgroup scope): built-in source rules, semgrep (if installed), lab harnesses with sanitizer detection | implemented (opt-in, `REMNANT_WORKER=bwrap`) |
 | Web UI | **not yet**: see `docs/ui.md` |
 
+> **New here? Read [docs/GUIDE.md](docs/GUIDE.md)** — running, first-run setup, and an end-to-end walkthrough.
+
 ## Run locally (one command)
 
 To try REMNANT on your own machine, with Docker installed:
@@ -186,6 +188,8 @@ tar xzf remnant_vX.Y.Z_linux_amd64.tar.gz
 The directory holding the binaries must be writable by the service user for self-update; otherwise use `check` mode and install releases through your own deployment.
 
 ## Documents
+
+- `docs/GUIDE.md` — running, setup, and an end-to-end walkthrough
 
 - `docs/architecture.md`: components, run lifecycle, data model
 - `docs/security.md`: authentication, secrets, isolation, deployment hardening
