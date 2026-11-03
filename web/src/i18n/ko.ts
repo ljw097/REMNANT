@@ -949,6 +949,14 @@ const ko = {
   "cmd.group.patterns": "패턴",
   "cmd.group.projects": "프로젝트",
   "cmd.group.models": "모델 프로필",
+  "stat.activeRuns": "진행 중 런",
+  "stat.awaitingTriage": "검토 대기",
+  "stat.pendingApprovals": "랩 승인 대기",
+  "stat.validated": "확정된 발견",
+  "stat.projects": "프로젝트",
+  "stat.paused": "일시정지 {n}",
+  "stat.inValidation": "검증 중 {n}",
+  "stat.targets": "대상 {n}",
 } as const satisfies Record<string, string>;
 
 export default ko;

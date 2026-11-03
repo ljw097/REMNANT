@@ -949,6 +949,14 @@ const en: Record<keyof typeof ko, string> = {
   "cmd.group.patterns": "Patterns",
   "cmd.group.projects": "Projects",
   "cmd.group.models": "Model profiles",
+  "stat.activeRuns": "Active runs",
+  "stat.awaitingTriage": "Awaiting triage",
+  "stat.pendingApprovals": "Lab approvals",
+  "stat.validated": "Validated findings",
+  "stat.projects": "Projects",
+  "stat.paused": "{n} paused",
+  "stat.inValidation": "{n} in validation",
+  "stat.targets": "{n} targets",
 };
 
 export default en;
