@@ -957,6 +957,12 @@ const en: Record<keyof typeof ko, string> = {
   "stat.paused": "{n} paused",
   "stat.inValidation": "{n} in validation",
   "stat.targets": "{n} targets",
+  "patterns.filter": "Status filter",
+  "patterns.filter.all": "All",
+  "patterns.filter.validated": "Validated",
+  "patterns.filter.reviewed": "Reviewed",
+  "patterns.filter.unreviewed": "Unreviewed",
+  "patterns.filter.mined": "Mined",
 };
 
 export default en;

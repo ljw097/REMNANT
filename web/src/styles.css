@@ -734,3 +734,9 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .statcard[data-tone="warn"] .statcard-value { color: var(--warn); }
 .statcard[data-tone="ok"] .statcard-value { color: var(--ok); }
 .statcard[data-tone="warn"] .statcard-top svg, .statcard[data-tone="ok"] .statcard-top svg { color: inherit; }
+
+/* ---------- Filter chips (ARTEX quick filters) ---------- */
+.chips { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+.chip { height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--ink-2); font: 550 var(--fs-1)/1 var(--font-sans); cursor: pointer; white-space: nowrap; }
+.chip:hover:not([aria-pressed="true"]) { background: var(--panel-hover); color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--primary); color: var(--primary-ink); }

@@ -957,6 +957,12 @@ const ko = {
   "stat.paused": "일시정지 {n}",
   "stat.inValidation": "검증 중 {n}",
   "stat.targets": "대상 {n}",
+  "patterns.filter": "상태 필터",
+  "patterns.filter.all": "전체",
+  "patterns.filter.validated": "검증됨",
+  "patterns.filter.reviewed": "검토됨",
+  "patterns.filter.unreviewed": "미검토",
+  "patterns.filter.mined": "히스토리 추출",
 } as const satisfies Record<string, string>;
 
 export default ko;
