@@ -1,10 +1,13 @@
 // Command remnantd is the REMNANT research server.
 //
-//	remnantd serve                                   run migrations, then serve the API
+//	remnantd serve                                   run migrations, then serve the API and web UI
 //	remnantd migrate                                 apply pending migrations and exit
-//	remnantd setup -mode team|personal -username NAME  first-run setup without the web UI
-//	remnantd create-user  -username NAME -role ROLE  create a user and print a first token
+//	remnantd setup -profile personal|team|managed -username NAME [-password-stdin]
+//	                                                 first-run setup without the web UI
+//	remnantd create-user  -username NAME -role ROLE  create a user and print an API token
 //	remnantd create-token -username NAME [-name N] [-ttl 720h]
+//	remnantd reset-password -username NAME [-password-stdin]
+//	                                                 set a sign-in password (temporary if not given)
 //	remnantd update [-check]                         install the latest signed release (or only report it)
 //	remnantd version                                 print the version
 package main
@@ -14,12 +17,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -70,9 +75,9 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths map[string]string) error {
 	switch cmd {
-	case "serve", "migrate", "setup", "create-user", "create-token", "update":
+	case "serve", "migrate", "setup", "create-user", "create-token", "reset-password", "update":
 	case "-h", "--help", "help":
-		fmt.Println("usage: remnantd [serve|migrate|setup|create-user|create-token|update|version] [flags]")
+		fmt.Println("usage: remnantd [serve|migrate|setup|create-user|create-token|reset-password|update|version] [flags]")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
@@ -112,6 +117,8 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths
 		return createUser(ctx, st, args)
 	case "create-token":
 		return createToken(ctx, st, args)
+	case "reset-password":
+		return resetPassword(ctx, st, args)
 	}
 	if err := announceSetup(ctx, log, st, cfg); err != nil {
 		return err
@@ -132,19 +139,36 @@ func announceSetup(ctx context.Context, log *slog.Logger, st *store.Store, cfg c
 		return err
 	}
 	log.Warn("first-run setup required", "url", "http://"+cfg.ListenAddr+"/", "setup_code", code, "expires_in", "24h")
-	fmt.Fprintf(os.Stderr, "\n  REMNANT first-run setup\n  Open http://%s/ and enter this setup code: %s\n  (or run: remnantd setup -mode team|personal -username NAME)\n\n", cfg.ListenAddr, code)
+	fmt.Fprintf(os.Stderr, "\n  REMNANT first-run setup\n  Open http://%s/ and enter this setup code: %s\n  (or run: remnantd setup -profile personal|team|managed -username NAME)\n\n", cfg.ListenAddr, code)
 	return nil
 }
 
 func setupCommand(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	mode := fs.String("mode", "", "team (two-person rules) or personal (one person may approve their own requests)")
+	profile := fs.String("profile", "", "personal (one researcher, self-approval recorded), team (cross-checked) or managed (administrators approve lab work and accounts)")
+	mode := fs.String("mode", "", "older name for -profile (team or personal)")
 	username := fs.String("username", "", "first administrator")
 	name := fs.String("name", "", "instance name shown in the UI (optional)")
+	pwStdin := fs.Bool("password-stdin", false, "read the administrator's password from standard input; without it a temporary password is printed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	u, token, err := st.Setup(ctx, store.SetupInput{Mode: *mode, Username: *username, TrustedLocal: true})
+	if *profile == "" {
+		*profile = *mode
+	}
+	pol, ok := store.Presets[*profile]
+	if !ok {
+		return fmt.Errorf("-profile must be personal, team or managed")
+	}
+	password, temporary, err := readPassword(*username, *pwStdin)
+	if err != nil {
+		return err
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	u, err := st.Setup(ctx, store.SetupInput{Policy: pol, Username: *username, PasswordHash: hash, MustChange: temporary, TrustedLocal: true})
 	if err != nil {
 		return err
 	}
@@ -153,8 +177,58 @@ func setupCommand(ctx context.Context, st *store.Store, args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(os.Stderr, "set up as %s; administrator %s. The token below is shown only once.\n", *mode, u.Username)
-	fmt.Println(token)
+	fmt.Fprintf(os.Stderr, "set up as %s; administrator %s.\n", *profile, u.Username)
+	if temporary {
+		fmt.Fprintln(os.Stderr, "Sign in with the temporary password below (shown once); you will be asked to change it.")
+		fmt.Println(password)
+	}
+	return nil
+}
+
+// readPassword reads a password from standard input, or generates a
+// temporary one when fromStdin is false.
+func readPassword(username string, fromStdin bool) (password string, temporary bool, err error) {
+	if !fromStdin {
+		return auth.NewTemporaryPassword(), true, nil
+	}
+	b := make([]byte, auth.MaxPasswordLength+2)
+	n, err := io.ReadFull(os.Stdin, b)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "", false, err
+	}
+	password = strings.TrimRight(string(b[:n]), "\r\n")
+	return password, false, auth.CheckPassword(username, password)
+}
+
+// resetPassword sets a user's sign-in password from the server, e.g. when
+// the last administrator forgot theirs. It signs out their sessions.
+func resetPassword(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("reset-password", flag.ContinueOnError)
+	username := fs.String("username", "", "existing user")
+	pwStdin := fs.Bool("password-stdin", false, "read the new password from standard input; without it a temporary password is printed")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	u, err := st.UserByName(ctx, *username)
+	if err != nil {
+		return fmt.Errorf("user %q: %w", *username, err)
+	}
+	password, temporary, err := readPassword(u.Username, *pwStdin)
+	if err != nil {
+		return err
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	if err := st.SetPassword(ctx, u.ID, hash, temporary, 0); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "password for %s reset; their sessions were signed out.\n", u.Username)
+	if temporary {
+		fmt.Fprintln(os.Stderr, "Temporary password (shown once; it must be changed at sign-in):")
+		fmt.Println(password)
+	}
 	return nil
 }
 
@@ -277,7 +351,7 @@ func createUser(ctx context.Context, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "created %s (%s); the token below is shown only once\n", u.Username, u.Role)
+	fmt.Fprintf(os.Stderr, "created %s (%s); the API token below is shown only once. For web sign-in run: remnantd reset-password -username %s\n", u.Username, u.Role, u.Username)
 	fmt.Println(token)
 	return nil
 }

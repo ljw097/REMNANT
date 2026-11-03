@@ -1,6 +1,5 @@
-// Server-Sent Events over fetch, so the bearer token travels in a header
-// (EventSource cannot send one). Reconnects with Last-Event-ID until the
-// server sends "end" or the caller aborts.
+// Server-Sent Events over fetch with the session cookie. Reconnects with
+// Last-Event-ID until the server sends "end" or the caller aborts.
 
 import { authHeaders } from "./client";
 import type { RunEvent } from "./types";
@@ -60,7 +59,7 @@ export async function streamRunEvents(runId: number, signal: AbortSignal, h: Str
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream", ...authHeaders() };
       if (lastId) headers["Last-Event-ID"] = lastId;
-      const res = await fetch(`/api/v1/runs/${runId}/events`, { headers, signal, credentials: "omit" });
+      const res = await fetch(`/api/v1/runs/${runId}/events`, { headers, signal, credentials: "same-origin" });
       if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
       h.onState?.("live");
       backoff = 1000;

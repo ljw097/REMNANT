@@ -13,9 +13,7 @@ import (
 )
 
 const (
-	candidatesPerPattern = 3  // per pattern and target
-	maxCandidates        = 24 // per run
-	maxExcerptBytes      = 12 << 10
+	maxExcerptBytes = 12 << 10
 )
 
 // signature is a pattern code signature compiled to a matcher. Identifiers
@@ -127,7 +125,7 @@ func numbered(lines []string, start, end int) (string, string) {
 
 // selectCandidates keeps the best candidates overall, at most
 // maxCandidates, preserving the per-pattern selection.
-func selectCandidates(perPattern [][]candidate) []candidate {
+func selectCandidates(perPattern [][]candidate, maxCandidates int) []candidate {
 	var all []candidate
 	for _, cs := range perPattern {
 		all = append(all, cs...)

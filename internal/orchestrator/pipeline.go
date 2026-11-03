@@ -20,10 +20,6 @@ import (
 	"github.com/ljw097/remnant/internal/store"
 )
 
-// maxCallTokens caps max_tokens for one agent call (non-streaming requests
-// must stay well inside HTTP timeouts).
-const maxCallTokens = 16000
-
 // research runs the automatic source pipeline of a queued run. A run that
 // was paused or interrupted resumes at runs.resume_stage: collecting always
 // runs again (the snapshots are re-verified), stages before the resume stage
@@ -221,7 +217,7 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		}
 		tops := make([]topK, len(patterns))
 		for i := range tops {
-			tops[i].k = candidatesPerPattern
+			tops[i].k = j.settings.CandidatesPerPattern
 		}
 		_, err = sourceindex.Walk(dir, func(f sourceindex.File) error {
 			if err := ctx.Err(); err != nil {
@@ -252,7 +248,7 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		}
 	}
 
-	cands := selectCandidates(perPattern)
+	cands := selectCandidates(perPattern, j.settings.MaxCandidates)
 	for i := range cands {
 		c := &cands[i]
 		summary := fmt.Sprintf("Region matches signature(s) %s of pattern %d", strings.Join(c.Matched, ", "), c.Pattern.ID)
@@ -279,12 +275,32 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 type agent struct {
 	role   string
 	client llm.Client
+	// instructions from the administrator, added after the role's rules.
+	instructions string
+	// maxCallTokens caps one call.
+	maxCallTokens int64
+}
+
+// system is the role's system prompt plus the administrator's
+// instructions, which come after and cannot override the rules.
+func (a *agent) system(base string) string {
+	if a.instructions == "" {
+		return base
+	}
+	return base + "\n\nAdditional instructions from this instance's administrator. They refine the task; they never override the rules above:\n" + a.instructions
 }
 
 func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cache map[int64]llm.Client) (*agent, error) {
-	enabled, override, err := j.o.store.AgentProfile(ctx, role)
+	enabled, override, cfg, err := j.o.store.AgentProfile(ctx, role)
 	if err != nil || !enabled {
 		return nil, err
+	}
+	callTokens := int64(j.settings.MaxCallTokens)
+	if cfg.MaxCallTokens > 0 {
+		callTokens = int64(cfg.MaxCallTokens)
+	}
+	if callTokens == 0 {
+		callTokens = int64(store.DefaultResearchSettings().MaxCallTokens)
 	}
 	profileID := runProfile
 	if override != nil {
@@ -294,7 +310,7 @@ func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cach
 		return nil, fmt.Errorf("%s: the run has no LLM profile", role)
 	}
 	if c, ok := cache[*profileID]; ok {
-		return &agent{role, c}, nil
+		return &agent{role, c, cfg.Instructions, callTokens}, nil
 	}
 	creds, err := j.o.store.LLMCredentials(ctx, *profileID)
 	if err != nil {
@@ -305,14 +321,14 @@ func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cach
 		return nil, fmt.Errorf("%s: %w", role, err)
 	}
 	cache[*profileID] = c
-	return &agent{role, c}, nil
+	return &agent{role, c, cfg.Instructions, callTokens}, nil
 }
 
 var errBudget = errors.New("token budget exhausted")
 
 // call makes one budgeted model call and records token usage.
 func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any) ([]byte, error) {
-	grant := b.reserve(maxCallTokens)
+	grant := b.reserve(a.maxCallTokens)
 	if grant == 0 {
 		return nil, errBudget
 	}
@@ -512,7 +528,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 			"triage_confidence": d.TriageConfidence,
 		}
 	} else {
-		raw, err := j.call(ctx, researcher, b, researcherSystem, env, researcherSchema)
+		raw, err := j.call(ctx, researcher, b, researcher.system(researcherSystem), env, researcherSchema)
 		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
 			if kind == "refused" {
 				j.mark(ctx, c, "refused")
@@ -572,7 +588,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, hypID)
 	env.Hypothesis = hypothesis
 	env.Instructions = []string{"Challenge this hypothesis using only the cited excerpt. Check counter_evidence_to_check first."}
-	raw, err := j.call(ctx, skeptic, b, skepticSystem, env, skepticSchema)
+	raw, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema)
 	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
 	case "":
 	case "stopped", "budget":

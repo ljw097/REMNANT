@@ -15,18 +15,34 @@ REMNANT_DEMO_DATABASE_URL=postgres://.../scratch scripts/dev-demo.sh   # UI with
 - Every UI response carries a strict CSP (`default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; …`), `X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`. The app uses no inline scripts or styles and never sets `innerHTML`; the only runtime styling is the branding accent, set through the CSSOM.
 - The UI build is reproducible; release archives embed it.
 
-## First run: team or personal
+## First run: type of use and the administrator
 
-While no users exist, `remnantd serve` prints a one-time setup code to its log (valid 24 hours, burned after 10 wrong attempts). Opening the UI shows the setup page, which asks for the code, the administrator's username, an optional instance name, and the operating mode:
+While no users exist, `remnantd serve` prints a one-time setup code to its log (valid 24 hours, burned after 10 wrong attempts). Opening the UI shows the setup page. Step 1 picks how the instance is used; each type presets the rules, and any rule can then be changed (the type becomes "custom"):
 
-- **Team** — the two-person rules apply: nobody approves their own lab request or reviews their own pattern. Use this when more than one person works on the instance.
-- **Personal** — one person may do both. Every such decision is still recorded, as `self_approved` / `self_reviewed`, and the chain of custody says so.
+| Type | For | Rules it sets |
+|---|---|---|
+| **Personal** | One researcher on their own machine | May approve their own lab requests and review their own patterns, each recorded as `self_approved` / `self_reviewed`; sessions last 30 days of inactivity |
+| **Team** | Researchers who cross-check each other | Nobody decides their own requests; administrators add accounts; 7-day sessions |
+| **Managed** | An organization where administrators hold the gates | Only administrators decide lab approvals; people may request an account on the sign-in page, which an administrator approves; 12-hour sessions |
 
-`remnantd setup -mode team|personal -username NAME [-name INSTANCE]` does the same from the command line and prints the administrator's token. An administrator can switch modes later under Settings → Operating mode; the switch applies to decisions made afterwards. Instances that already had users when this was introduced start in team mode.
+The rules are: self-approval of lab requests, self-review of patterns, administrator-only lab approval, account requests, and the inactivity sign-out (1 hour – 30 days). Step 2 creates the administrator: username, password (10+ characters, not the username), an optional instance name, and the setup code. Setup signs the administrator straight in.
+
+`remnantd setup -profile personal|team|managed -username NAME [-name INSTANCE] [-password-stdin]` does the same from the command line; without `-password-stdin` it prints a temporary password that must be changed at the first sign-in. Administrators change the rules later under Settings → Operating mode; changes apply to decisions made afterwards.
+
+### Working alone on your own machine
+
+For the personal type nothing else is needed: `remnantd serve` listens on `127.0.0.1:8080` by default, and without `REMNANT_MASTER_KEY` it creates `<data dir>/master.key` (mode 0600) on first start and reuses it. While it listens only on loopback, remnantd answers only requests addressed to `localhost`/`127.0.0.1`/`::1`, so a web page elsewhere cannot reach it by DNS rebinding.
 
 ## Sign-in
 
-The user pastes a bearer token. The UI calls `GET /me`, keeps the token in `sessionStorage` (this tab only), and hides actions the role cannot perform; the server enforces them regardless. Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming body reader, so the token stays in the `Authorization` header; reconnects send `Last-Event-ID`.
+People sign in with their username and password. The server sets an HttpOnly, SameSite=Strict session cookie; the page never sees it, and every state-changing request also carries `X-Remnant-Request: 1`. Sessions end after the policy's inactivity period, after 30 days at most, on sign-out, when the password changes (other sessions), or when the account is disabled.
+
+- **Temporary passwords:** an administrator who adds a user without choosing a password, or resets one (Settings → Users), gets a temporary password shown once. The user must replace it before anything else.
+- **Forgotten passwords:** an administrator resets it; on the server, `remnantd reset-password -username NAME` works even for the last administrator.
+- **Account requests** (when the policy takes them): "Request an account" on the sign-in page creates a pending researcher account that appears at the top of Settings → Users for an administrator to approve or decline.
+- **API tokens** remain for scripts and the CLI (`Authorization: Bearer rmt_…`); administrators issue them under Settings → Users or with `remnantd create-token`.
+
+Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming body reader; reconnects send `Last-Event-ID`.
 
 ## Customisation
 
@@ -47,7 +63,7 @@ The user pastes a bearer token. The UI calls `GET /me`, keeps the token in `sess
 | `/findings` | Validated findings and those awaiting lab results. |
 | `/projects`, `/projects/{id}` | Projects, policy, and targets (local snapshots or pinned Git repositories). |
 | `/patterns`, `/patterns/{id}` | Root-cause pattern library with review state and custody. |
-| `/settings/*` | Preferences, dashboard, account; for administrators: operating mode, users (roles, disable, new tokens shown once), model profiles (API key entered once, never shown), branding, system and updates. |
+| `/settings/*` | Preferences, dashboard, account (password). For administrators: operating mode (instance policy); users; **model profiles** (register an API key, test the connection without spending tokens, edit, replace the key, set thinking/timeout/retries, delete when unused); **agents** (turn the Hypothesis Researcher or Skeptic on or off, give each its own model profile, a per-call token cap and additional instructions); **expert settings** (run defaults, candidates per pattern and per run, tokens per model call, lab defaults, approval lifetime, which static analyzers run); branding; system and updates with the read-only server configuration. |
 
 Desktop and laptop get the sidebar; on phones the sidebar becomes a menu, tables scroll inside their panel, and approvals and run status are fully usable.
 

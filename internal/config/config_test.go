@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func env(m map[string]string) func(string) string {
 	base := map[string]string{"REMNANT_DATABASE_URL": "postgres://x", "REMNANT_MASTER_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
@@ -36,5 +40,28 @@ func TestRejects(t *testing.T) {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestMasterKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	get := env(map[string]string{"REMNANT_MASTER_KEY": "", "REMNANT_DATA_DIR": dir})
+	a, err := Load(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "master.key"))
+	if err != nil || fi.Mode().Perm() != 0o600 || len(a.MasterKey) != 32 {
+		t.Fatalf("key file %v %v, key %d bytes", fi, err, len(a.MasterKey))
+	}
+	b, err := Load(get)
+	if err != nil || string(b.MasterKey) != string(a.MasterKey) {
+		t.Fatalf("second load: %v, same key %v", err, string(b.MasterKey) == string(a.MasterKey))
+	}
+	if err := os.Chmod(filepath.Join(dir, "master.key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(get); err == nil {
+		t.Fatal("a world-readable key file was accepted")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/ljw097/remnant/internal/fetch"
+	"github.com/ljw097/remnant/internal/llm"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/source"
 	"github.com/ljw097/remnant/internal/store"
@@ -20,18 +21,24 @@ func (s *Server) listLLMProfiles(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createLLMProfile(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name     string `json:"name"`
-		Provider string `json:"provider"`
-		BaseURL  string `json:"base_url"`
-		Model    string `json:"model"`
-		Effort   string `json:"effort"`
-		APIKey   string `json:"api_key"`
+		Name     string       `json:"name"`
+		Provider string       `json:"provider"`
+		BaseURL  string       `json:"base_url"`
+		Model    string       `json:"model"`
+		Effort   string       `json:"effort"`
+		APIKey   string       `json:"api_key"`
+		Options  *llm.Options `json:"options"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	if in.Effort == "" {
 		in.Effort = "high"
+	}
+	// New profiles think adaptively unless told otherwise.
+	opts := llm.Options{Thinking: "adaptive"}
+	if in.Options != nil {
+		opts = *in.Options
 	}
 	if !validate(w,
 		required("name", in.Name, 120),
@@ -40,11 +47,13 @@ func (s *Server) createLLMProfile(w http.ResponseWriter, r *http.Request) {
 		oneOf("effort", in.Effort, "low", "medium", "high", "xhigh", "max"),
 		required("api_key", in.APIKey, 4096),
 		maxLen("base_url", in.BaseURL, 2048),
+		checkBaseURL(in.BaseURL),
+		checkOptions(&opts),
 	) {
 		return
 	}
 	p, err := s.store.CreateLLMProfile(r.Context(), store.LLMProfileInput{
-		Name: in.Name, Provider: in.Provider, BaseURL: in.BaseURL, Model: in.Model, Effort: in.Effort, APIKey: in.APIKey,
+		Name: in.Name, Provider: in.Provider, BaseURL: in.BaseURL, Model: in.Model, Effort: in.Effort, APIKey: in.APIKey, Options: opts,
 	})
 	if err != nil {
 		s.fail(w, r, err)

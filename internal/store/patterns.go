@@ -54,7 +54,7 @@ func (s *Store) SearchPatterns(ctx context.Context, q, class, language string) (
 
 // ReviewPattern records a human review. "validated" additionally requires
 // at least one validated hypothesis derived from the pattern. Reviewing a
-// pattern you authored needs allowSelf (personal mode) and is recorded as
+// pattern you authored needs allowSelf (the policy allows self-review) and is recorded as
 // self_reviewed; the schema refuses it otherwise.
 func (s *Store) ReviewPattern(ctx context.Context, id int64, status string, reviewer int64, allowSelf bool) (Pattern, error) {
 	var author *int64

@@ -1,34 +1,37 @@
 import { useState } from "react";
 import { ApiError, post } from "../api/client";
+import type { InstancePolicy } from "../api/types";
 import { useI18n, type Key, type Lang } from "../i18n";
+import type { Gate } from "../session";
 import { Alert, Button, Field, Segmented } from "../ui/components";
-import { Icon, type IconName } from "../ui/Icon";
+import { Icon } from "../ui/Icon";
+import { fallbackPresets, PolicyEditor } from "../ui/policy";
+import { NewPasswordFields, passwordProblem } from "./Password";
 
-type Mode = "team" | "personal";
-
-/** First-run setup: choose team or personal use and create the first administrator. */
-export function Setup({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang) => void; onDone: (token: string) => Promise<void> }) {
+/** First-run setup: choose how the instance is used, then create the first administrator. */
+export function Setup({ lang, setLang, onSignedIn, status }: Gate) {
   const { t } = useI18n();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [mode, setMode] = useState<Mode | null>(null);
+  const presets = status?.presets ?? fallbackPresets;
+  const [step, setStep] = useState<1 | 2>(1);
+  const [policy, setPolicy] = useState<InstancePolicy | null>(null);
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [instanceName, setInstanceName] = useState("");
   const [code, setCode] = useState("");
-  const [token, setToken] = useState("");
-  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const usernameOk = /^[a-z0-9][a-z0-9._-]{1,63}$/.test(username);
+  const ready = usernameOk && confirm && !passwordProblem(username, password, confirm) && code.replace(/-/g, "").length >= 12;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!mode) return;
+    if (!policy) return;
     setBusy(true);
     setError(undefined);
     try {
-      const res = await post<{ token: string }>("/setup", { mode, username, code, instance_name: instanceName.trim() });
-      setToken(res.token);
-      setStep(3);
+      await post("/setup", { code, username, password, instance_name: instanceName.trim(), policy });
+      await onSignedIn();
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) setError(t("setup.error.code"));
       else if (err instanceof ApiError && err.status === 409) setError(t("setup.error.done"));
@@ -54,9 +57,9 @@ export function Setup({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang
           </p>
         </div>
         <ol aria-label={t("setup.steps")}>
-          {([1, 2, 3] as const).map((n) => (
+          {([1, 2] as const).map((n) => (
             <li key={n} aria-current={step === n ? "step" : undefined} style={{ color: step === n ? "var(--ink)" : undefined }}>
-              <Icon name={step > n ? "check" : n === 1 ? "users" : n === 2 ? "key" : "lock"} />
+              <Icon name={step > n ? "check" : n === 1 ? "users" : "key"} />
               <span>
                 <strong>{t(`setup.step${n}` as Key)}</strong>
                 <br />
@@ -67,7 +70,7 @@ export function Setup({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang
         </ol>
       </aside>
       <main className="signin-main">
-        <div className="signin-form" style={{ width: "min(560px, 100%)" }}>
+        <div className="signin-form" style={{ width: "min(640px, 100%)" }}>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h2>{t(`setup.step${step}` as Key)}</h2>
             <Segmented<Lang>
@@ -83,33 +86,29 @@ export function Setup({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang
 
           {step === 1 ? (
             <>
-              <div className="mode-cards" role="radiogroup" aria-label={t("setup.step1")}>
-                <ModeCard value="personal" current={mode} onPick={setMode} icon="user" />
-                <ModeCard value="team" current={mode} onPick={setMode} icon="users" />
-              </div>
+              <PolicyEditor value={policy} presets={presets} onChange={setPolicy} />
               <p className="small muted">{t("setup.modeLater")}</p>
-              <Button variant="primary" size="lg" disabled={!mode} onClick={() => setStep(2)}>
+              <Button variant="primary" size="lg" disabled={!policy} onClick={() => setStep(2)}>
                 {t("setup.next")}
               </Button>
             </>
           ) : null}
 
-          {step === 2 ? (
+          {step === 2 && policy ? (
             <form className="form-grid" onSubmit={submit}>
               <Field label={t("setup.username")} hint={t("setup.usernameHint")} error={username && !usernameOk ? t("setup.usernameInvalid") : undefined}>
                 {(id) => (
                   <input id={id} className="input" value={username} autoFocus autoComplete="username" spellCheck={false} aria-invalid={username && !usernameOk ? true : undefined} onChange={(e) => setUsername(e.target.value.toLowerCase())} />
                 )}
               </Field>
+              <NewPasswordFields username={username} value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm} label={t("setup.password")} />
               <Field label={t("setup.instanceName")} hint={t("setup.instanceNameHint")}>
                 {(id) => <input id={id} className="input" value={instanceName} maxLength={60} placeholder="REMNANT" onChange={(e) => setInstanceName(e.target.value)} />}
               </Field>
               <Field label={t("setup.code")} hint={t("setup.codeHint")}>
                 {(id) => <input id={id} className="input mono" value={code} spellCheck={false} autoComplete="one-time-code" placeholder="XXXX-XXXX-XXXX" onChange={(e) => setCode(e.target.value.toUpperCase())} />}
               </Field>
-              <code className="small" style={{ display: "block", padding: "8px 10px", background: "var(--code-bg)", borderRadius: 4, overflowX: "auto" }}>
-                REMNANT first-run setup … enter this setup code: XXXX-XXXX-XXXX
-              </code>
+              {policy.profile === "personal" ? <p className="small ink-2">{t("setup.personalLocal")}</p> : null}
               {error ? (
                 <Alert tone="bad" icon="alert">
                   {error}
@@ -119,54 +118,14 @@ export function Setup({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang
                 <Button variant="ghost" icon="chevronLeft" onClick={() => setStep(1)}>
                   {t("setup.back")}
                 </Button>
-                <Button type="submit" variant="primary" size="lg" loading={busy} disabled={!usernameOk || code.replace(/-/g, "").length < 12}>
-                  {t(mode === "personal" ? "setup.submitPersonal" : "setup.submitTeam")}
+                <Button type="submit" variant="primary" size="lg" loading={busy} disabled={!ready}>
+                  {t("setup.submit", { profile: t(`profile.${policy.profile}` as Key) })}
                 </Button>
               </div>
             </form>
           ) : null}
-
-          {step === 3 ? (
-            <div className="form-grid">
-              <Alert tone="warn" icon="key">
-                {t("setup.tokenOnce")}
-              </Alert>
-              <div className="row" style={{ flexWrap: "nowrap" }}>
-                <input className="input mono" readOnly value={token} aria-label={t("signin.token")} onFocus={(e) => e.target.select()} />
-                <Button
-                  icon={copied ? "check" : "copy"}
-                  onClick={() => void navigator.clipboard?.writeText(token).then(() => setCopied(true))}
-                >
-                  {copied ? t("common.copied") : t("common.copy")}
-                </Button>
-              </div>
-              {mode === "team" ? <p className="small ink-2">{t("setup.teamNext")}</p> : <p className="small ink-2">{t("setup.personalNext")}</p>}
-              <Button variant="primary" size="lg" icon="arrowRight" onClick={() => void onDone(token)}>
-                {t("setup.continue")}
-              </Button>
-            </div>
-          ) : null}
         </div>
       </main>
     </div>
-  );
-}
-
-function ModeCard({ value, current, onPick, icon }: { value: Mode; current: Mode | null; onPick: (m: Mode) => void; icon: IconName }) {
-  const { t } = useI18n();
-  const selected = current === value;
-  return (
-    <button type="button" role="radio" aria-checked={selected} className="mode-card" onClick={() => onPick(value)}>
-      <span className="row" style={{ gap: 10 }}>
-        <Icon name={icon} size={18} />
-        <strong>{t(`mode.${value}` as Key)}</strong>
-      </span>
-      <span className="small ink-2">{t(`mode.${value}.for` as Key)}</span>
-      <ul className="bullets small">
-        <li>{t(`mode.${value}.approval` as Key)}</li>
-        <li>{t(`mode.${value}.patterns` as Key)}</li>
-        <li>{t(`mode.${value}.users` as Key)}</li>
-      </ul>
-    </button>
   );
 }

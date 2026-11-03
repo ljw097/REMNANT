@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ApiError, get, onUnauthorized, put, setToken, getToken } from "./api/client";
-import type { Branding, Principal, Role, Summary, VersionInfo } from "./api/types";
+import { get, onUnauthorized, post, put } from "./api/client";
+import type { AuthStatus, Branding, InstancePolicy, Presets, Principal, Role, Summary, VersionInfo } from "./api/types";
 import { detectLang, I18nProvider, type Lang } from "./i18n";
+import { navigate } from "./router";
 import { applyAppearance, defaultPrefs, normalizePrefs, type Prefs } from "./prefs";
 
 interface Session {
@@ -13,11 +14,14 @@ interface Session {
   version: VersionInfo | null;
   reloadVersion: () => void;
   summary: Summary | null;
-  /** "personal": one person may approve their own requests (recorded); "team": two-person rules. */
-  mode: "team" | "personal";
-  setMode: (m: "team" | "personal") => void;
+  /** How the instance is used: self-approval, admin-only lab approval, account requests… */
+  policy: InstancePolicy;
+  presets: Presets | null;
+  setPolicy: (p: InstancePolicy) => void;
   reloadSummary: () => void;
   signOut: () => void;
+  /** Re-reads the principal, e.g. after a temporary password was changed. */
+  refreshMe: () => Promise<void>;
   can: (...roles: Role[]) => boolean;
 }
 
@@ -33,29 +37,56 @@ export const appName = (b: Branding) => b.name.trim() || "REMNANT";
 
 type Phase = { kind: "loading" } | { kind: "signedOut"; error?: string } | { kind: "ready"; me: Principal; prefs: Prefs };
 
-/**
- * Loads the public branding, then the session for the stored token. Renders
- * `signIn` until a token is accepted, `children` after.
- */
-type Gate = { onToken: (t: string) => Promise<void>; branding: Branding; lang: Lang; setLang: (l: Lang) => void; error?: string };
+/** What the sign-in and setup pages get before anyone is signed in. */
+export type Gate = {
+  /** Called once the server has set the session cookie. */
+  onSignedIn: () => Promise<void>;
+  branding: Branding;
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  error?: string;
+  status: AuthStatus | null;
+};
 
-export function SessionProvider({ children, signIn, setup }: { children: ReactNode; signIn: (p: Gate) => ReactNode; setup: (p: Gate) => ReactNode }) {
+const teamPolicy: InstancePolicy = { profile: "team", self_approval: false, self_review: false, admin_lab_approval: false, account_requests: false, session_hours: 168 };
+
+/**
+ * Loads the public branding, then the session behind the browser's cookie.
+ * Renders `setup` on a new instance, `signIn` until someone signs in,
+ * `changePassword` while they hold a temporary password, `children` after.
+ */
+export function SessionProvider({
+  children,
+  signIn,
+  setup,
+  changePassword,
+}: {
+  children: ReactNode;
+  signIn: (p: Gate) => ReactNode;
+  setup: (p: Gate) => ReactNode;
+  changePassword: ReactNode;
+}) {
   const [branding, setBranding] = useState<Branding>({ name: "", accent: "" });
   const [lang, setLang] = useState<Lang>(detectLang());
-  const [phase, setPhase] = useState<Phase>({ kind: getToken() ? "loading" : "signedOut" });
+  const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [tick, setTick] = useState(0);
 
-  const [setupRequired, setSetupRequired] = useState(false);
-  const [mode, setMode] = useState<"team" | "personal">("team");
+  const [status, setStatus] = useState<AuthStatus | null>(null);
+  const [policy, setPolicy] = useState<InstancePolicy>(teamPolicy);
+  const [presets, setPresets] = useState<Presets | null>(null);
   useEffect(() => {
-    get<{ required: boolean }>("/setup")
-      .then((s) => setSetupRequired(s.required))
-      .catch(() => undefined);
-  }, []);
+    if (phase.kind === "signedOut" && status === null) get<AuthStatus>("/auth/status").then(setStatus).catch(() => undefined);
+  }, [phase.kind, status]);
   useEffect(() => {
-    if (phase.kind === "ready") get<{ mode: "team" | "personal" }>("/instance").then((i) => setMode(i.mode)).catch(() => undefined);
+    if (phase.kind === "ready")
+      get<{ policy: InstancePolicy; presets: Presets }>("/instance")
+        .then((i) => {
+          setPolicy(i.policy);
+          setPresets(i.presets);
+        })
+        .catch(() => undefined);
   }, [phase.kind]);
 
   useEffect(() => {
@@ -64,27 +95,29 @@ export function SessionProvider({ children, signIn, setup }: { children: ReactNo
 
   const start = useCallback(async () => {
     try {
-      const me = await get<Principal>("/me");
+      const st = await get<AuthStatus>("/auth/status");
+      setStatus(st);
+      if (!st.user) {
+        setPhase({ kind: "signedOut" });
+        return;
+      }
+      const me = st.user;
       const raw = await get<unknown>("/me/preferences").catch(() => ({}));
       setPhase({ kind: "ready", me, prefs: normalizePrefs(raw, me.role, detectLang()) });
     } catch (e) {
-      setToken(null);
-      const msg = e instanceof ApiError && e.status === 401 ? "signin.error.invalid" : "signin.error.unreachable";
-      setPhase({ kind: "signedOut", error: msg });
+      setPhase({ kind: "signedOut", error: "signin.error.unreachable" });
       throw e;
     }
   }, []);
 
   useEffect(() => {
-    if (phase.kind === "loading") void start().catch(() => undefined);
-    // Only on first mount.
+    void start().catch(() => undefined);
   }, []);
 
   useEffect(
     () =>
       onUnauthorized(() => {
-        setToken(null);
-        setPhase({ kind: "signedOut", error: "signin.error.expired" });
+        setPhase((p) => (p.kind === "ready" ? { kind: "signedOut", error: "signin.error.expired" } : p));
       }),
     [],
   );
@@ -108,7 +141,8 @@ export function SessionProvider({ children, signIn, setup }: { children: ReactNo
 
   // Version and the counts behind navigation badges refresh in the background.
   useEffect(() => {
-    if (!ready) return;
+    // A session holding a temporary password may only change it.
+    if (!ready || ready.me.must_change_password) return;
     const ac = new AbortController();
     get<VersionInfo>("/system/version", ac.signal).then(setVersion).catch(() => undefined);
     get<Summary>("/summary", ac.signal).then(setSummary).catch(() => undefined);
@@ -119,7 +153,7 @@ export function SessionProvider({ children, signIn, setup }: { children: ReactNo
       ac.abort();
       clearInterval(id);
     };
-  }, [ready?.me.user_id, tick]);
+  }, [ready?.me.user_id, ready?.me.must_change_password, tick]);
 
   const value = useMemo<Session | null>(() => {
     if (!ready) return null;
@@ -138,31 +172,37 @@ export function SessionProvider({ children, signIn, setup }: { children: ReactNo
       summary,
       reloadSummary: () => setTick((n) => n + 1),
       signOut: () => {
-        setToken(null);
+        void post("/auth/logout").catch(() => undefined);
+        // The next person to sign in starts from the top, not on this user's page.
+        navigate("/", { replace: true });
         setPhase({ kind: "signedOut" });
       },
+      refreshMe: async () => {
+        const me = await get<Principal>("/me");
+        setPhase({ ...ready, me });
+      },
       can: (...roles) => ready.me.role === "admin" || roles.includes(ready.me.role),
-      mode,
-      setMode,
+      policy,
+      presets,
+      setPolicy,
     };
-  }, [ready, branding, version, summary, mode]);
+  }, [ready, branding, version, summary, policy, presets]);
 
   return (
     <I18nProvider lang={effectiveLang}>
       {phase.kind === "loading" ? (
         <div className="empty center" aria-busy="true" />
       ) : value ? (
-        <Ctx.Provider value={value}>{children}</Ctx.Provider>
+        <Ctx.Provider value={value}>{value.me.must_change_password ? changePassword : children}</Ctx.Provider>
       ) : (
-        (setupRequired && phase.kind === "signedOut" ? setup : signIn)({
+        (status?.setup_required ? setup : signIn)({
           branding,
           lang,
           setLang,
+          status,
           error: phase.kind === "signedOut" ? phase.error : undefined,
-          onToken: async (t) => {
-            setToken(t);
+          onSignedIn: async () => {
             await start();
-            setSetupRequired(false);
             get<Branding>("/branding").then(setBranding).catch(() => undefined);
           },
         })

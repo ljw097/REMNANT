@@ -2,27 +2,39 @@
 
 ## Authentication
 
-- Every `/api/v1` route requires `Authorization: Bearer rmt_<43 chars>`, except `/healthz`, `GET /api/v1/branding` (name and accent for the sign-in page) and `/api/v1/setup`. The web UI's static files are public; they contain no data.
-- First-run setup (`POST /setup`) works only while there are no users and needs the one-time code `remnantd serve` prints to its log: 12 random characters, stored only as SHA-256, valid 24 hours, burned after 10 wrong attempts. Setup runs under a table lock, so two concurrent requests cannot both create an administrator. `remnantd setup` does the same from the command line.
-- Tokens are 32 random bytes. Only `SHA-256(token)` is stored (`api_tokens.token_sha256`); the plaintext is printed once by `remnantd create-user` / `create-token`.
-- A token is rejected if it is revoked, expired, or its user is disabled. Revoke with `UPDATE remnant.api_tokens SET revoked_at = now() WHERE id = …`.
-- Browsers: `EventSource` cannot send headers, so the UI reads the SSE stream with `fetch()` and a streaming body reader. Tokens are never put in query strings.
+- **People** sign in with a username and password (`POST /auth/login`). Passwords are 10–256 characters and not the username, and are stored only as PBKDF2-HMAC-SHA256 (600 000 iterations, 16-byte random salt, standard library). An unknown username costs the same hash work as a wrong password, and the response does not say which it was.
+- **Guessing:** password endpoints are rate-limited per client address (20 per minute), and 10 wrong passwords in a row lock the account for 15 minutes. Account requests are limited to 5 per hour per address.
+- **Sessions** are 32 random bytes in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` behind TLS or `X-Forwarded-Proto: https`); only `SHA-256(token)` is stored (`sessions.token_sha256`). A session ends after the instance policy's inactivity period (1 hour – 30 days), after 30 days regardless, on sign-out, when the user is disabled, and — except the one making the change — when the password changes or an administrator resets it.
+- **Cross-site requests:** a state-changing request authenticated by cookie must carry `X-Remnant-Request: 1`, which a cross-site form cannot send and cross-origin scripts cannot add without a CORS preflight remnantd never grants; if the browser sends `Origin`, its host must equal `Host`. The public login, setup and account-request endpoints require the same header.
+- **Temporary passwords** (16 random base32 characters) are shown once when an administrator creates or resets an account; such a session can only change the password, sign out and read who it is until then.
+- **Account requests** (when the policy allows them) create a pending researcher account that cannot sign in until an administrator approves it; declining deletes it.
+- **API tokens** for scripts: `Authorization: Bearer rmt_<43 chars>`, 32 random bytes, only `SHA-256(token)` stored (`api_tokens.token_sha256`), printed once by `remnantd create-user` / `create-token` or Settings → Users. A token is rejected if revoked, expired, or its user is disabled or pending. Revoke with `UPDATE remnant.api_tokens SET revoked_at = now() WHERE id = …`. Tokens never appear in URLs.
+- **Public routes:** `/healthz`, `GET /api/v1/branding`, `GET /api/v1/auth/status`, `POST /api/v1/auth/login`, `POST /api/v1/auth/request-account` and `/api/v1/setup`. The web UI's static files are public; they contain no data.
+- **First-run setup** (`POST /setup`) works only while there are no users and needs the one-time code `remnantd serve` prints to its log: 12 random characters, stored only as SHA-256, valid 24 hours, burned after 10 wrong attempts. Setup runs under a table lock, so two concurrent requests cannot both create an administrator. `remnantd setup` does the same from the command line.
+- **Local instances:** while remnantd listens only on a loopback address (the default `127.0.0.1:8080`), it refuses requests whose `Host` is not `localhost` or a loopback address (421), so a web page cannot reach it through DNS rebinding.
 
 ## Authorisation
 
 Roles are checked per route (see `architecture.md`). Separation of duty for approvals and pattern reviews is also enforced by `CHECK` constraints, so a bug in the API layer cannot bypass it.
 
-An instance runs in **team** mode (the default) or **personal** mode, chosen at setup and changeable by an administrator. Personal mode lets one person approve their own lab request or review their own pattern; the database still requires a second person unless the row is marked `self_approved` / `self_reviewed`, and the API sets that flag only in personal mode, so every self-decision stays visible in the record and the UI's chain of custody. The last active administrator cannot be demoted or disabled.
+The instance policy, chosen at setup (personal, team or managed, then any rule changed) and changeable by an administrator, decides how far those rules bend:
 
-The web UI is served with a strict Content-Security-Policy (same-origin scripts, styles and connections only; no inline code; no framing). It keeps the token in `sessionStorage` for the tab and never in URLs.
+- `self_approval` / `self_review` let a requester decide their own lab approval and an author review their own pattern. The database still requires a second person unless the row is marked `self_approved` / `self_reviewed`, and the API sets that flag only when the policy allows it, so every self-decision stays visible in the record and the UI's chain of custody.
+- `admin_lab_approval` reserves lab approval decisions for administrators.
+- `account_requests` opens the sign-in page's account request form.
+
+When the policy cannot be read, the API applies the team rules. The last active administrator cannot be demoted or disabled; `remnantd reset-password` recovers a forgotten administrator password on the server.
+
+The web UI is served with a strict Content-Security-Policy (same-origin scripts, styles and connections only; no inline code; no framing).
 
 ## Model credentials
 
-- API keys are sealed with AES-256-GCM under `REMNANT_MASTER_KEY` with associated data `remnant/llm_profiles/api_key/v1`. A sealed value copied into another column fails to decrypt.
+- API keys are sealed with AES-256-GCM under the master key (`REMNANT_MASTER_KEY`, or the key file `REMNANT_MASTER_KEY_FILE`, default `<data dir>/master.key`, created with mode 0600 when neither exists and refused if other users can read it) with associated data `remnant/llm_profiles/api_key/v1`. A sealed value copied into another column fails to decrypt.
 - The API returns only `has_api_key` and a four-character hint. No route returns key material; `store.LLMCredentials` is the only decrypting path and is used only to build a model client.
 - A model client is built from its stored profile only: `ANTHROPIC_*` variables in the server environment are ignored, so they cannot redirect a profile's key to another endpoint.
 - The master key is never stored in the database. Losing it makes stored keys unrecoverable; re-enter them.
-- Rotation: `key_version` exists for a future re-seal command. Until then, rotate by re-creating profiles.
+- Rotation: an administrator replaces a profile's key in Settings → Model profiles (`PATCH /llm-profiles/{id}` with `api_key`); the old sealed key is overwritten. "Test connection" (`POST /llm-profiles/{id}/test`, or `/llm-profiles/test` for unsaved settings) looks the model up at the provider with the key — it spends no tokens and returns only success or the HTTP reason, never key material. A profile cannot be deleted while a project, agent or unfinished run uses it.
+- Agent instructions set by administrators are appended to an agent's system prompt after REMNANT's rules, under a heading that says they cannot override them; the model's output is still schema-validated and evidence-checked as before.
 
 ## Source handling
 

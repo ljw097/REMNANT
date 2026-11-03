@@ -13,7 +13,7 @@ import { HypothesisRows } from "./RunDetail";
 
 export function PatternDetailPage({ id }: { id: number }) {
   const { t } = useI18n();
-  const { can, me, mode } = useSession();
+  const { can, me, policy } = useSession();
   const toast = useToast();
   const userName = useUserNames();
   const p = useApi<Pattern>(`/patterns/${id}`);
@@ -39,7 +39,7 @@ export function PatternDetailPage({ id }: { id: number }) {
   if (p.error) return <Frame crumbs={[{ label: t("nav.patterns"), to: "/patterns" }, { label: `P-${id}` }]}><ErrorNote error={p.error} retry={p.reload} /></Frame>;
   const x = p.data;
   const author = x?.created_by === me.user_id;
-  const mayReview = x && can("reviewer") && (!author || mode === "personal");
+  const mayReview = x && can("reviewer") && (!author || policy.self_review);
 
   return (
     <Frame crumbs={[{ label: t("nav.patterns"), to: "/patterns" }, { label: `P-${id}` }]}>
@@ -150,7 +150,7 @@ export function PatternDetailPage({ id }: { id: number }) {
                       </Button>
                     </div>
                     {!validatedFinding ? <p className="tiny muted">{t("patterns.validateNeeds")}</p> : null}
-                    {author && mode === "personal" ? <p className="tiny muted">{t("patterns.selfNote")}</p> : null}
+                    {author && policy.self_review ? <p className="tiny muted">{t("patterns.selfNote")}</p> : null}
                   </div>
                 </Panel>
               ) : author && can("reviewer") ? (

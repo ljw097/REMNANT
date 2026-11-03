@@ -4,12 +4,18 @@ info:
   version: 1.0.0
   description: |
     Source-first vulnerability research API served by remnantd.
-    Every route except /healthz, GET /branding and /setup requires `Authorization: Bearer rmt_…`
-    (issue tokens with `remnantd create-user` / `remnantd create-token`, or from Settings in the web UI).
+    Two ways to authenticate:
+    - People sign in with a username and password (`POST /auth/login`); the server sets an HttpOnly,
+      SameSite=Strict session cookie. Every state-changing request made with the cookie must send
+      `X-Remnant-Request: 1` (and, if the browser sends Origin, come from the same origin).
+    - Scripts use `Authorization: Bearer rmt_…` API tokens (`remnantd create-token`, or Settings → Users).
+    Public routes: /healthz, GET /branding, GET /auth/status, POST /auth/login, POST /auth/request-account
+    and /setup. A session that signed in with a temporary password can only change it
+    (`403 password_change_required` elsewhere).
     Roles: admin (everything), researcher (create/run), reviewer (triage/approve).
-    Deployment modes: `team` (default) keeps the two-person rules — nobody decides their own lab
-    approval or reviews their own pattern. `personal` lets one person do both; every such decision
-    is recorded as self-approved/self-reviewed.
+    The instance policy (`/instance`) decides the approval rules: whether requesters may approve their own
+    lab requests and authors review their own patterns (recorded as self_approved / self_reviewed),
+    whether only administrators decide lab approvals, and whether people may request accounts.
 servers:
   - url: /api/v1
 security:
@@ -71,6 +77,108 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+
+  /llm-profiles/test:
+    post:
+      summary: Check unsaved profile settings (admin) — key, endpoint and model — without spending tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, api_key]
+              properties:
+                provider: { type: string, enum: [anthropic], default: anthropic }
+                base_url: { type: string }
+                model: { type: string }
+                api_key: { type: string, writeOnly: true }
+                options: { $ref: '#/components/schemas/ModelOptions' }
+      responses:
+        '200': { description: Result (ok false carries the reason), content: { application/json: { schema: { $ref: '#/components/schemas/ProfileCheck' } } } }
+  /llm-profiles/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    patch:
+      summary: Edit a model profile (admin); a non-empty api_key replaces the stored key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                base_url: { type: string, maxLength: 2048 }
+                model: { type: string, maxLength: 200 }
+                effort: { type: string, enum: [low, medium, high, xhigh, max] }
+                api_key: { type: string, writeOnly: true, description: Replaces the key; the old one cannot be recovered }
+                options: { $ref: '#/components/schemas/ModelOptions' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/LLMProfile' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete a model profile (admin) that no project, agent or unfinished run uses
+      responses:
+        '204': { description: Deleted }
+        '409': { description: In use, $ref: '#/components/responses/Error' }
+  /llm-profiles/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Check a stored profile's key, endpoint and model (admin) without spending tokens
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileCheck' } } } }
+  /agents:
+    get:
+      summary: The pipeline's agents and their settings
+      responses:
+        '200': { description: Agents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Agent' } } } } }
+  /agents/{role}:
+    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [hypothesis_researcher, skeptic] } }]
+    patch:
+      summary: Change an agent (admin)
+      description: llm_profile_id 0 returns the agent to the run's profile. Instructions are added after the agent's rules and cannot override them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                llm_profile_id: { type: integer, format: int64 }
+                config: { $ref: '#/components/schemas/AgentConfig' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /settings/research:
+    get:
+      summary: Research settings, their defaults, and the server's configured static analyzers
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings: { $ref: '#/components/schemas/ResearchSettings' }
+                  defaults: { $ref: '#/components/schemas/ResearchSettings' }
+                  static_operations: { type: array, items: { type: string } }
+    put:
+      summary: Change the research settings (admin); they apply to runs and requests started afterwards
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ResearchSettings' } } }
+      responses:
+        '200': { description: Saved }
+        '400': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /system/config:
+    get:
+      summary: The server's environment configuration (admin, read-only, no secrets)
+      responses:
+        '200': { description: Configuration, content: { application/json: { schema: { type: object } } } }
 
   /projects:
     get:
@@ -378,59 +486,139 @@ paths:
         '403': { description: Requester tried to decide their own request, $ref: '#/components/responses/Error' }
         '409': { description: Already decided, or stale (expired, revision/scope/policy changed) — a stale approval is marked expired, $ref: '#/components/responses/Error' }
 
-  /setup:
+  /auth/status:
     get:
-      summary: Whether first-run setup is still needed (public)
+      summary: Who is signed in (by session cookie), and whether setup or account requests are open (public)
       security: []
       responses:
-        '200': { description: Setup state, content: { application/json: { schema: { type: object, properties: { required: { type: boolean } } } } } }
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { oneOf: [{ $ref: '#/components/schemas/Principal' }, { type: 'null' }] }
+                  setup_required: { type: boolean }
+                  account_requests: { type: boolean }
+                  presets: { type: object, additionalProperties: { $ref: '#/components/schemas/InstancePolicy' } }
+  /auth/login:
     post:
-      summary: Create the first administrator and choose the deployment mode (public, once)
+      summary: Sign in with a username and password (public); sets the session cookie
       description: |
-        Needs the one-time setup code remnantd prints to its log while no users exist (valid 24 h;
-        10 wrong attempts burn it). Works only while there are no users. `remnantd setup` does the same
-        from the command line.
+        Rate-limited per client. Ten wrong passwords in a row lock the account for 15 minutes.
+        Sessions end after the policy's inactivity period and after 30 days at most.
       security: []
+      parameters: [{ $ref: '#/components/parameters/SameOrigin' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string } } }
+      responses:
+        '200': { description: Signed in; Set-Cookie remnant_session, content: { application/json: { schema: { $ref: '#/components/schemas/Principal' } } } }
+        '401': { description: Wrong username or password, $ref: '#/components/responses/Error' }
+        '403': { description: Account request not yet approved (code pending), or missing X-Remnant-Request, $ref: '#/components/responses/Error' }
+        '429': { description: Locked (code locked) or rate-limited, $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      summary: End the current session and clear the cookie
+      responses:
+        '204': { description: Signed out }
+  /auth/request-account:
+    post:
+      summary: Ask for an account (public; only when the policy takes account requests)
+      description: Creates a pending researcher account that cannot sign in until an administrator approves it.
+      security: []
+      parameters: [{ $ref: '#/components/parameters/SameOrigin' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string, minLength: 10 } } }
+      responses:
+        '202': { description: Pending approval }
+        '403': { description: Account requests are off, $ref: '#/components/responses/Error' }
+        '409': { description: Username taken, $ref: '#/components/responses/Error' }
+  /me/password:
+    put:
+      summary: Change your password; signs out your other sessions
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [code, mode, username]
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 10, maxLength: 256 }
+      responses:
+        '204': { description: Changed }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: The current password is wrong, $ref: '#/components/responses/Error' }
+  /setup:
+    get:
+      summary: Same as GET /auth/status (kept for older clients)
+      security: []
+      responses:
+        '200': { description: Status }
+    post:
+      summary: Create the first administrator and set the instance policy (public, once); signs them in
+      description: |
+        Needs the one-time setup code remnantd prints to its log while no users exist (valid 24 h;
+        10 wrong attempts burn it). Works only while there are no users. `remnantd setup -profile …`
+        does the same from the command line.
+      security: []
+      parameters: [{ $ref: '#/components/parameters/SameOrigin' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, username, password, policy]
               properties:
                 code: { type: string }
-                mode: { $ref: '#/components/schemas/Mode' }
                 username: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{1,63}$' }
+                password: { type: string, minLength: 10, maxLength: 256 }
                 instance_name: { type: string, maxLength: 60 }
+                policy: { $ref: '#/components/schemas/InstancePolicy' }
       responses:
         '201':
-          description: The administrator and their token (shown once)
+          description: Set up and signed in (Set-Cookie remnant_session)
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  user: { type: object }
-                  token: { type: string }
-                  mode: { $ref: '#/components/schemas/Mode' }
+                  user: { $ref: '#/components/schemas/Principal' }
+                  policy: { $ref: '#/components/schemas/InstancePolicy' }
         '400': { $ref: '#/components/responses/Error' }
         '403': { description: Wrong or expired setup code, $ref: '#/components/responses/Error' }
         '409': { description: Setup already done, $ref: '#/components/responses/Error' }
   /instance:
     get:
-      summary: The deployment mode
+      summary: The instance policy and the profile presets
       responses:
-        '200': { description: Mode, content: { application/json: { schema: { type: object, properties: { mode: { $ref: '#/components/schemas/Mode' } } } } } }
+        '200':
+          description: Policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policy: { $ref: '#/components/schemas/InstancePolicy' }
+                  presets: { type: object, additionalProperties: { $ref: '#/components/schemas/InstancePolicy' } }
     put:
-      summary: Change the deployment mode (admin)
-      description: Takes effect for decisions made afterwards; past self-approvals stay recorded.
+      summary: Change the instance policy (admin)
+      description: Applies to decisions made afterwards; past self-approvals stay recorded. A policy whose rules differ from its profile's preset is stored as profile custom.
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { $ref: '#/components/schemas/Mode' } } } } }
+        content: { application/json: { schema: { type: object, required: [policy], properties: { policy: { $ref: '#/components/schemas/InstancePolicy' } } } } }
       responses:
-        '200': { description: Changed, content: { application/json: { schema: { type: object, properties: { mode: { $ref: '#/components/schemas/Mode' } } } } } }
-        '400': { $ref: '#/components/responses/Error' }
+        '200': { description: Changed }
+        '422': { $ref: '#/components/responses/Error' }
   /branding:
     get:
       summary: Organization branding (public; the sign-in page shows it)
@@ -488,7 +676,8 @@ paths:
       responses:
         '200': { description: Users, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/UserRef' } } } } }
     post:
-      summary: Create a user (admin); returns their first token once
+      summary: Create a user (admin)
+      description: Without a password, a temporary one is generated and returned once; the user must change it at the first sign-in.
       requestBody:
         required: true
         content:
@@ -499,15 +688,16 @@ paths:
               properties:
                 username: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{1,63}$' }
                 role: { type: string, enum: [admin, researcher, reviewer] }
+                password: { type: string, minLength: 10, maxLength: 256 }
       responses:
-        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { user: { type: object }, token: { type: string } } } } } }
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { user: { type: object }, temporary_password: { type: string } } } } } }
         '400': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
   /users/{id}:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     patch:
-      summary: Change a user's role or disable them (admin)
-      description: The last active administrator cannot be demoted or disabled.
+      summary: Change a user's role, disable them, or approve an account request (admin)
+      description: The last active administrator cannot be demoted or disabled. Disabling signs the user out.
       requestBody:
         required: true
         content:
@@ -517,20 +707,32 @@ paths:
               properties:
                 role: { type: string, enum: [admin, researcher, reviewer] }
                 disabled: { type: boolean }
+                approve: { type: boolean, description: Approve a pending account request }
       responses:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/UserRef' } } } }
         '409': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Decline a pending account request (admin); active accounts are disabled instead
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Error' }
+  /users/{id}/password:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Reset a user's password (admin); returns a temporary password once and signs them out
+      responses:
+        '200': { description: Reset, content: { application/json: { schema: { type: object, properties: { temporary_password: { type: string } } } } } }
   /users/{id}/tokens:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
-      summary: Issue a new token for a user (admin); shown once
+      summary: Issue an API token for a user's scripts (admin); shown once
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                name: { type: string, maxLength: 60, default: web }
+                name: { type: string, maxLength: 60, default: api }
                 ttl_hours: { type: integer, minimum: 0, maximum: 8784, description: 0 means no expiry }
       responses:
         '201': { description: Token, content: { application/json: { schema: { type: object, properties: { token: { type: string } } } } } }
@@ -548,6 +750,7 @@ components:
     BearerAuth: { type: http, scheme: bearer }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+    SameOrigin: { name: X-Remnant-Request, in: header, required: true, schema: { const: '1' }, description: Proves the request is not a cross-site form post }
   responses:
     Error:
       description: Error
@@ -557,7 +760,7 @@ components:
             type: object
             properties:
               error: { type: string }
-              code: { type: string, enum: [bad_request, unauthorized, forbidden, not_found, conflict, invalid, source_policy, snapshot_unavailable, update_source, internal] }
+              code: { type: string, enum: [bad_request, unauthorized, forbidden, not_found, conflict, invalid, source_policy, snapshot_unavailable, update_source, internal, pending, locked, rate_limited, password_change_required, bad_host] }
   schemas:
     Principal:
       type: object
@@ -565,6 +768,7 @@ components:
         user_id: { type: integer, format: int64 }
         username: { type: string }
         role: { type: string, enum: [admin, researcher, reviewer] }
+        must_change_password: { type: boolean }
     UpdateState:
       type: object
       properties:
@@ -587,6 +791,8 @@ components:
         effort: { type: string, enum: [low, medium, high, xhigh, max] }
         has_api_key: { type: boolean }
         api_key_hint: { type: string, description: 'Last four characters, e.g. "…a1B2"' }
+        options: { $ref: '#/components/schemas/ModelOptions' }
+        used_by: { type: integer, description: Projects and agents that use the profile }
         updated_at: { type: string, format: date-time }
     CreateLLMProfile:
       type: object
@@ -599,6 +805,7 @@ components:
         model: { type: string, examples: [claude-opus-5-5] }
         effort: { type: string, enum: [low, medium, high, xhigh, max], default: high }
         api_key: { type: string, writeOnly: true }
+        options: { $ref: '#/components/schemas/ModelOptions' }
     Policy:
       type: object
       required: [source_mode, dynamic_mode, network]
@@ -884,7 +1091,15 @@ components:
         message: { type: string }
         payload: { type: object }
         created_at: { type: string, format: date-time }
-    Mode: { type: string, enum: [team, personal] }
+    InstancePolicy:
+      type: object
+      properties:
+        profile: { type: string, enum: [personal, team, managed, custom] }
+        self_approval: { type: boolean, description: The requester may decide their own lab approval (recorded) }
+        self_review: { type: boolean, description: A pattern's author may review it (recorded) }
+        admin_lab_approval: { type: boolean, description: Only administrators decide lab approvals }
+        account_requests: { type: boolean, description: People may request an account on the sign-in page }
+        session_hours: { type: integer, minimum: 1, maximum: 720, description: Sign out after this long without activity }
     Branding:
       type: object
       properties:
@@ -918,3 +1133,41 @@ components:
         username: { type: string }
         role: { type: string, enum: [admin, researcher, reviewer] }
         disabled: { type: boolean }
+        pending: { type: boolean }
+        has_password: { type: boolean }
+    ModelOptions:
+      type: object
+      properties:
+        thinking: { type: string, enum: ['', adaptive, disabled], description: Empty keeps the model default }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 900, description: Per request attempt; 0 is the SDK default (else 10–900) }
+        max_retries: { type: [integer, 'null'], minimum: 0, maximum: 10, description: null is the SDK default }
+    ProfileCheck:
+      type: object
+      properties:
+        ok: { type: boolean }
+        model: { type: string, description: The model's display name }
+        error: { type: string }
+    AgentConfig:
+      type: object
+      properties:
+        instructions: { type: string, maxLength: 4000 }
+        max_call_tokens: { type: integer, description: 0 keeps the instance setting, else 2048–32000 }
+    Agent:
+      type: object
+      properties:
+        role: { type: string, enum: [hypothesis_researcher, skeptic] }
+        display_name: { type: string }
+        enabled: { type: boolean }
+        llm_profile_id: { type: [integer, 'null'] }
+        config: { $ref: '#/components/schemas/AgentConfig' }
+        updated_at: { type: string, format: date-time }
+    ResearchSettings:
+      type: object
+      properties:
+        run_defaults: { $ref: '#/components/schemas/Limits' }
+        candidates_per_pattern: { type: integer, minimum: 1, maximum: 10 }
+        max_candidates: { type: integer, minimum: 1, maximum: 100 }
+        max_call_tokens: { type: integer, minimum: 2048, maximum: 32000 }
+        lab_defaults: { $ref: '#/components/schemas/LabLimits' }
+        approval_ttl_hours: { type: integer, minimum: 1, maximum: 168 }
+        disabled_static_operations: { type: array, items: { type: string } }

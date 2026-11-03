@@ -216,15 +216,15 @@ check "cancelled" cancelled "$(wait_status $RUN2 cancelled 5)"
 check "cancel twice" 409 "$(req $RES POST /runs/$RUN2/cancel)"
 check "run 404" 404 "$(req $RES GET /runs/99999)"
 
-# Web UI, first-run setup and team/personal modes.
+# Web UI, first-run setup, sign-in and instance policies.
 U=http://127.0.0.1:58080
 check "ui index" 200 "$(curl -s -D $SP/hdr -o $SP/index.html -w '%{http_code}' $U/)"
 check "ui csp" 1 "$(grep -ci "^content-security-policy: default-src 'none'" $SP/hdr)"
 check "ui history fallback" 200 "$(curl -s -o /dev/null -w '%{http_code}' $U/runs/$RUN)"
 check "ui post rejected" 405 "$(curl -s -o /dev/null -w '%{http_code}' -X POST $U/)"
 check "unknown api path" 401 "$(curl -s -o /dev/null -w '%{http_code}' $B/nope)"
-check "setup not required" 200 "$(curl -s -o $SP/body -w '%{http_code}' $B/setup)"; check "setup flag" False "$(j "['required']")"
-check "setup after users" 409 "$(curl -s -o $SP/body -w '%{http_code}' -H 'Content-Type: application/json' -d '{"code":"AAAA-BBBB-CCCC","mode":"team","username":"mallory"}' $B/setup)"
+check "setup not required" 200 "$(curl -s -o $SP/body -w '%{http_code}' $B/auth/status)"; check "setup flag" False "$(j "['setup_required']")"
+check "setup after users" 409 "$(curl -s -o $SP/body -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-Remnant-Request: 1' -d '{"code":"AAAA-BBBB-CCCC","username":"mallory","password":"mallory-passphrase","policy":{"profile":"team","session_hours":168}}' $B/setup)"
 check "branding public" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/branding)"
 check "branding by researcher" 403 "$(req $RES PUT /branding '{"name":"x"}')"
 check "preferences" 200 "$(req $RES PUT /me/preferences '{"lang":"ko"}')"
@@ -232,15 +232,100 @@ check "preferences read back" ko "$(req $RES GET /me/preferences >/dev/null; j "
 check "summary" 200 "$(req $RES GET /summary)"
 check "approvals list" 200 "$(req $REV GET '/approvals?decision=approved')"
 check "users list" 200 "$(req $RES GET /users)"; check "users listed" 3 "$(j ".__len__()")"
-check "instance mode" team "$(req $RES GET /instance >/dev/null; j "['mode']")"
-check "mode by researcher" 403 "$(req $RES PUT /instance '{"mode":"personal"}')"
+check "default policy" team "$(req $RES GET /instance >/dev/null; j "['policy']['profile']")"
+check "policy by researcher" 403 "$(req $RES PUT /instance '{"policy":{"profile":"personal","self_approval":true,"self_review":true,"session_hours":720}}')"
+check "host guard" 421 "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' $U/)"
+
+# Password sign-in with a session cookie.
+JAR=$SP/jar
+login() { # user password [no-header] -> status; cookie in $JAR
+  local h='X-Remnant-Request: 1'; [ -n "${3:-}" ] && h='X-Nothing: 1'
+  curl -s -c $JAR -b $JAR -o $SP/body -w '%{http_code}' -H 'Content-Type: application/json' -H "$h" \
+    -d "{\"username\":\"$1\",\"password\":\"$2\"}" $B/auth/login
+}
+creq() { # method path [body] with the cookie and the same-origin header
+  local m=$1 p=$2; shift 2
+  curl -s -b $JAR -o $SP/body -w '%{http_code}' -X "$m" -H 'X-Remnant-Request: 1' -H 'Content-Type: application/json' ${1:+-d "$1"} "$B$p"
+}
+echo "rita's passphrase" | $SP/remnantd reset-password -username rita -password-stdin 2>/dev/null
+check "login without same-origin header" 403 "$(login rita "rita's passphrase" no-header)"
+check "login wrong password" 401 "$(login rita "not her passphrase")"
+check "login unknown user" 401 "$(login nobody "rita's passphrase")"
+check "login" 200 "$(login rita "rita's passphrase")"; check "login role" researcher "$(j "['role']")"
+check "session cookie httponly" 1 "$(grep -c '^#HttpOnly_127.0.0.1.*remnant_session' $JAR)"
+check "session not stored" 0 "$($PSQL -c "select count(*) from remnant.sessions where token_sha256 like 'rms_%'")"
+check "cookie me" 200 "$(creq GET /me)"
+check "cookie write without header" 403 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{}' $B/me/preferences)"
+check "cookie write cross-site" 403 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' -X PUT -H 'X-Remnant-Request: 1' -H 'Origin: https://evil.example' -H 'Content-Type: application/json' -d '{}' $B/me/preferences)"
+check "cookie write" 200 "$(creq PUT /me/preferences '{"lang":"en"}')"
+check "change password wrong current" 403 "$(creq PUT /me/password '{"current_password":"nope nope nope","new_password":"ritas new passphrase"}')"
+check "change password weak" 400 "$(creq PUT /me/password "{\"current_password\":\"rita's passphrase\",\"new_password\":\"short\"}")"
+check "change password" 204 "$(creq PUT /me/password "{\"current_password\":\"rita's passphrase\",\"new_password\":\"rita's new passphrase\"}")"
+check "session kept after change" 200 "$(creq GET /me)"
+check "logout" 204 "$(creq POST /auth/logout)"
+check "session ended" 401 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' $B/me)"
+check "old password refused" 401 "$(login rita "rita's passphrase")"
+
+# Temporary passwords: an administrator creates or resets; the user must change it.
+check "user with temporary password" 201 "$(req $ADMIN POST /users '{"username":"tina","role":"reviewer"}')"
+TMP=$(j "['temporary_password']")
+check "temporary password length" 16 "${#TMP}"
+check "temporary login" 200 "$(login tina "$TMP")"; check "must change" True "$(j "['must_change_password']")"
+check "gated until changed" 403 "$(creq GET /runs)"; check "gate code" password_change_required "$(j "['code']")"
+check "change temporary" 204 "$(creq PUT /me/password "{\"current_password\":\"$TMP\",\"new_password\":\"tina's own passphrase\"}")"
+check "ungated" 200 "$(creq GET /runs)"
+check "admin reset" 200 "$(req $ADMIN POST /users/$($PSQL -c "select id from remnant.users where username='tina'")/password)"
+check "reset ends sessions" 401 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' $B/me)"
+
+# Account requests follow the policy; the managed profile takes them.
+check "request refused in team" 403 "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Remnant-Request: 1' -H 'Content-Type: application/json' -d '{"username":"uma","password":"uma passphrase"}' $B/auth/request-account)"
+check "managed policy" 200 "$(req $ADMIN PUT /instance '{"policy":{"profile":"managed","admin_lab_approval":true,"account_requests":true,"session_hours":12}}')"
+check "managed profile" managed "$(j "['policy']['profile']")"
+check "account request" 202 "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Remnant-Request: 1' -H 'Content-Type: application/json' -d '{"username":"uma","password":"uma passphrase"}' $B/auth/request-account)"
+check "pending sign-in" 403 "$(login uma "uma passphrase")"; check "pending code" pending "$(j "['code']")"
+UMA=$($PSQL -c "select id from remnant.users where username='uma'")
+check "approve request" 200 "$(req $ADMIN PATCH /users/$UMA '{"approve":true}')"
+check "approved sign-in" 200 "$(login uma "uma passphrase")"
+check "delete active account" 409 "$(req $ADMIN DELETE /users/$UMA)"
+
+# Self-review follows the policy.
 check "own pattern" 201 "$(req $ADMIN POST /patterns '{"title":"Own pattern","vulnerability_class":"memory-safety","root_cause":"self review check","language":"c"}')"
 OWN=$(j "['id']")
-check "team self review" 403 "$(req $ADMIN POST /patterns/$OWN/review '{"status":"reviewed"}')"
-check "personal mode" 200 "$(req $ADMIN PUT /instance '{"mode":"personal"}')"
+check "self review refused" 403 "$(req $ADMIN POST /patterns/$OWN/review '{"status":"reviewed"}')"
+check "personal policy" 200 "$(req $ADMIN PUT /instance '{"policy":{"profile":"personal","self_approval":true,"self_review":true,"session_hours":720}}')"
 check "personal self review" 200 "$(req $ADMIN POST /patterns/$OWN/review '{"status":"reviewed"}')"
 check "self review recorded" t "$($PSQL -c "select self_reviewed from remnant.patterns where id=$OWN")"
-check "back to team" 200 "$(req $ADMIN PUT /instance '{"mode":"team"}')"
+check "back to team" 200 "$(req $ADMIN PUT /instance '{"policy":{"profile":"team","session_hours":168}}')"
+
+# Model profiles, agents and expert settings.
+check "profile test" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
+check "profile test by researcher" 403 "$(req $RES POST /llm-profiles/$LLM/test)"
+check "unsaved bad key" False "$(req $ADMIN POST /llm-profiles/test '{"model":"claude-opus-5-5","api_key":"wrong-key","base_url":"http://127.0.0.1:58081"}' >/dev/null; j "['ok']")"
+check "unsaved unknown model" 'model "gpt-x" was not found (404)' "$(req $ADMIN POST /llm-profiles/test '{"model":"gpt-x","api_key":"sk-ant-test-0123456789","base_url":"http://127.0.0.1:58081"}' >/dev/null; j "['error']")"
+check "profile options" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"options":{"thinking":"adaptive","timeout_seconds":120,"max_retries":1}}')"
+check "profile options saved" adaptive/120 "$(j "['options']['thinking']")/$(j "['options']['timeout_seconds']")"
+check "profile bad options" 400 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"options":{"thinking":"always"}}')"
+check "profile key rotation" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"api_key":"sk-ant-rotated-99999999"}')"; check "rotated hint" "…9999" "$(j "['api_key_hint']")"
+check "rotated key works" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
+check "delete profile in use" 409 "$(req $ADMIN DELETE /llm-profiles/$LLM)"
+check "agents" 200 "$(req $RES GET /agents)"; check "two agents" 2 "$(j ".__len__()")"
+check "agent by researcher" 403 "$(req $RES PATCH /agents/skeptic '{"enabled":false}')"
+check "agent instructions" 200 "$(req $ADMIN PATCH /agents/hypothesis_researcher '{"config":{"instructions":"Prefer length arithmetic.","max_call_tokens":4096}}')"
+check "agent bad cap" 400 "$(req $ADMIN PATCH /agents/skeptic '{"config":{"max_call_tokens":10}}')"
+check "unknown agent" 404 "$(req $ADMIN PATCH /agents/reporter '{"enabled":false}')"
+check "research settings" 200 "$(req $RES GET /settings/research)"; check "default ttl" 24 "$(j "['settings']['approval_ttl_hours']")"
+SET=$(python3 -c "import json; d=json.load(open('$SP/body'))['settings']; print(json.dumps(d))")
+mut() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); exec(sys.argv[2]); print(json.dumps(d))' "$SET" "$1"; }
+SET=$(mut "d['approval_ttl_hours']=48; d['run_defaults']['max_tokens']=300000")
+check "research settings by researcher" 403 "$(req $RES PUT /settings/research "$SET")"
+check "research settings save" 200 "$(req $ADMIN PUT /settings/research "$SET")"
+check "bad research settings" 422 "$(req $ADMIN PUT /settings/research "$(mut "d['max_candidates']=0")")"
+check "unknown analyzer" 400 "$(req $ADMIN PUT /settings/research "$(mut "d['disabled_static_operations']=['static.magic']")")"
+check "run uses new defaults" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"; check "default tokens applied" 300000 "$(j "['limits']['max_tokens']")"
+RUN5=$(j "['id']"); req $RES POST /runs/$RUN5/cancel >/dev/null
+check "system config" 200 "$(req $ADMIN GET /system/config)"; check "key source" environment "$(j "['master_key_source']")"
+check "no secrets in config" 0 "$(grep -c "$REMNANT_MASTER_KEY" $SP/body)"
+check "system config by researcher" 403 "$(req $RES GET /system/config)"
 
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
 

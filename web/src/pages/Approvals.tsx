@@ -14,6 +14,7 @@ type Tab = "pending" | "decided";
 
 export function ApprovalsPage() {
   const { t } = useI18n();
+  const { policy } = useSession();
   const { query } = useLocation();
   const [tab, setTab] = useState<Tab>("pending");
   const all = useApi<Approval[]>("/approvals", 30_000);
@@ -25,7 +26,7 @@ export function ApprovalsPage() {
 
   return (
     <Frame crumbs={[{ label: t("nav.approvals") }]}>
-      <PageHead title={t("nav.approvals")} sub={t("approvals.sub")} />
+      <PageHead title={t("nav.approvals")} sub={t(policy.admin_lab_approval ? "approvals.subAdmin" : policy.self_approval ? "approvals.subSelf" : "approvals.sub")} />
       <Tabs<Tab>
         value={tab}
         onChange={setTab}
@@ -73,7 +74,7 @@ export function ApprovalsPage() {
 
 function ApprovalDrawer({ approval: a, onClose, onDone }: { approval?: Approval; onClose: () => void; onDone: () => void }) {
   const { t, dateTime } = useI18n();
-  const { me, can, reloadSummary, mode } = useSession();
+  const { me, can, reloadSummary, policy } = useSession();
   const userName = useUserNames();
   const toast = useToast();
   const [note, setNote] = useState("");
@@ -100,8 +101,9 @@ function ApprovalDrawer({ approval: a, onClose, onDone }: { approval?: Approval;
   };
 
   const own = a?.requested_by === me.user_id;
-  const selfAllowed = own && mode === "personal";
-  const mayDecide = a?.decision === "pending" && can("reviewer") && (!own || selfAllowed);
+  const selfAllowed = own && policy.self_approval;
+  const roleOk = policy.admin_lab_approval ? can("admin") && me.role === "admin" : can("reviewer");
+  const mayDecide = a?.decision === "pending" && roleOk && (!own || selfAllowed);
   const expired = a ? new Date(a.expires_at).getTime() < Date.now() : false;
 
   return (
@@ -178,6 +180,11 @@ function ApprovalDrawer({ approval: a, onClose, onDone }: { approval?: Approval;
               ]}
             />
           </section>
+          {policy.admin_lab_approval && me.role !== "admin" && a.decision === "pending" ? (
+            <Alert tone="info" icon="shield">
+              {t("approvals.adminOnly")}
+            </Alert>
+          ) : null}
           {selfAllowed && a.decision === "pending" ? (
             <Alert tone="warn" icon="user">
               {t("approvals.selfExplain")}

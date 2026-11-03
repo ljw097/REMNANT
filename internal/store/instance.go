@@ -16,39 +16,92 @@ import (
 	"github.com/ljw097/remnant/internal/auth"
 )
 
-// Deployment modes. Team mode enforces two-person rules; personal mode lets
-// one person decide their own requests, recorded as self-approval.
+// Instance profiles. A profile presets the policy rules; any rule can then
+// be changed, which makes the profile "custom".
 const (
-	ModeTeam     = "team"
-	ModePersonal = "personal"
+	// ProfilePersonal: one researcher on their own machine. They may approve
+	// their own lab requests and review their own patterns; each such
+	// decision is recorded as a self-decision.
+	ProfilePersonal = "personal"
+	// ProfileTeam: researchers cross-check each other. Nobody decides their
+	// own requests.
+	ProfileTeam = "team"
+	// ProfileManaged: an organization where administrators gate things:
+	// only an administrator approves lab experiments, and people may ask
+	// for an account, which an administrator approves.
+	ProfileManaged = "managed"
+	ProfileCustom  = "custom"
 )
 
+// Policy is how the instance is used. It is stored as one instance setting.
+type Policy struct {
+	Profile string `json:"profile"`
+	// SelfApproval lets the requester of a lab approval decide it.
+	SelfApproval bool `json:"self_approval"`
+	// SelfReview lets a pattern's author review it.
+	SelfReview bool `json:"self_review"`
+	// AdminLabApproval reserves lab approval decisions for administrators.
+	AdminLabApproval bool `json:"admin_lab_approval"`
+	// AccountRequests lets people request an account on the sign-in page;
+	// an administrator approves each request.
+	AccountRequests bool `json:"account_requests"`
+	// SessionHours signs a browser session out after this long without
+	// activity (1–720).
+	SessionHours int `json:"session_hours"`
+}
+
+// Presets maps each profile except custom to its rules.
+var Presets = map[string]Policy{
+	ProfilePersonal: {Profile: ProfilePersonal, SelfApproval: true, SelfReview: true, SessionHours: 720},
+	ProfileTeam:     {Profile: ProfileTeam, SessionHours: 168},
+	ProfileManaged:  {Profile: ProfileManaged, AdminLabApproval: true, AccountRequests: true, SessionHours: 12},
+}
+
 const (
-	modeKey      = "deployment_mode"
+	policyKey    = "policy"
 	setupCodeKey = "setup_code"
 	// maxSetupAttempts wrong codes invalidate the setup code; a restart
 	// issues a new one.
 	maxSetupAttempts = 10
 )
 
-// DeploymentMode returns team or personal; an unset mode is team.
-func (s *Store) DeploymentMode(ctx context.Context) (string, error) {
-	var mode string
-	ok, err := s.Setting(ctx, modeKey, &mode)
-	if err != nil {
-		return "", err
+// Normalize validates p and names its profile: a profile whose rules no
+// longer match its preset becomes custom.
+func (p Policy) Normalize() (Policy, error) {
+	if p.SessionHours < 1 || p.SessionHours > 720 {
+		return Policy{}, fmt.Errorf("%w: session_hours must be 1–720", ErrInvalid)
 	}
-	if !ok || (mode != ModeTeam && mode != ModePersonal) {
-		return ModeTeam, nil
+	if _, ok := Presets[p.Profile]; !ok && p.Profile != ProfileCustom {
+		return Policy{}, fmt.Errorf("%w: profile must be personal, team, managed or custom", ErrInvalid)
 	}
-	return mode, nil
+	if preset, ok := Presets[p.Profile]; !ok || preset != p {
+		p.Profile = ProfileCustom
+	}
+	return p, nil
 }
 
-func (s *Store) SetDeploymentMode(ctx context.Context, mode string, by int64) error {
-	if mode != ModeTeam && mode != ModePersonal {
-		return fmt.Errorf("%w: mode must be team or personal", ErrInvalid)
+// Policy returns the instance policy; an instance without one is a team.
+func (s *Store) Policy(ctx context.Context) (Policy, error) {
+	var p Policy
+	ok, err := s.Setting(ctx, policyKey, &p)
+	if err != nil {
+		return Policy{}, err
 	}
-	return s.SetSetting(ctx, modeKey, mode, by)
+	if !ok {
+		return Presets[ProfileTeam], nil
+	}
+	if p.SessionHours < 1 || p.SessionHours > 720 {
+		p.SessionHours = Presets[ProfileTeam].SessionHours
+	}
+	return p, nil
+}
+
+func (s *Store) SetPolicy(ctx context.Context, p Policy, by int64) (Policy, error) {
+	p, err := p.Normalize()
+	if err != nil {
+		return Policy{}, err
+	}
+	return p, s.SetSetting(ctx, policyKey, p, by)
 }
 
 func (s *Store) UserCount(ctx context.Context) (int, error) {
@@ -99,24 +152,28 @@ var ErrSetupCode = fmt.Errorf("%w: the setup code is wrong or expired", ErrForbi
 
 // SetupInput describes the first administrator and how the instance is used.
 type SetupInput struct {
-	Mode     string
+	Policy   Policy
 	Username string
-	Code     string // required unless TrustedLocal
+	// PasswordHash is the administrator's password hash. MustChange makes
+	// them replace it at the first sign-in (the CLI generated it).
+	PasswordHash string
+	MustChange   bool
+	Code         string // required unless TrustedLocal
 	// TrustedLocal skips the code: the CLI runs on the server with database
 	// access and needs no proof of being the operator.
 	TrustedLocal bool
 }
 
-// Setup creates the first administrator and records the deployment mode. It
+// Setup creates the first administrator and records the instance policy. It
 // succeeds once: a table lock makes concurrent attempts serialise, and any
 // existing user ends setup for good.
-func (s *Store) Setup(ctx context.Context, in SetupInput) (User, string, error) {
-	if in.Mode != ModeTeam && in.Mode != ModePersonal {
-		return User{}, "", fmt.Errorf("%w: mode must be team or personal", ErrInvalid)
-	}
-	token, digest, err := auth.NewToken()
+func (s *Store) Setup(ctx context.Context, in SetupInput) (User, error) {
+	pol, err := in.Policy.Normalize()
 	if err != nil {
-		return User{}, "", err
+		return User{}, err
+	}
+	if in.PasswordHash == "" {
+		return User{}, fmt.Errorf("%w: a password is required", ErrInvalid)
 	}
 	var user User
 	var badCode bool
@@ -155,37 +212,37 @@ func (s *Store) Setup(ctx context.Context, in SetupInput) (User, string, error) 
 			}
 		}
 		u, err := one[User](tx.Query(ctx, `
-			INSERT INTO users(username, role) VALUES ($1, 'admin')
-			RETURNING id, username, role, disabled, created_at`, in.Username))
+			INSERT INTO users(username, role, password_hash, must_change_password, password_changed_at)
+			VALUES ($1, 'admin', $2, $3, now())
+			RETURNING `+userCols, in.Username, in.PasswordHash, in.MustChange))
 		if err != nil {
 			return mapErr(err)
 		}
 		user = u
-		if _, err := tx.Exec(ctx, `INSERT INTO api_tokens(user_id, name, token_sha256) VALUES ($1, 'setup', $2)`, u.ID, digest); err != nil {
-			return err
-		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO instance_settings(key, value, updated_by) VALUES ($1, $2, $3)
 			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-			modeKey, `"`+in.Mode+`"`, u.ID); err != nil {
+			policyKey, pol, u.ID); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `DELETE FROM instance_settings WHERE key = $1`, setupCodeKey)
 		return err
 	})
 	if err != nil {
-		return User{}, "", err
+		return User{}, err
 	}
 	if badCode {
-		return User{}, "", ErrSetupCode
+		return User{}, ErrSetupCode
 	}
-	return user, token, nil
+	return user, nil
 }
 
-// UserPatch changes a user's role or disabled flag.
+// UserPatch changes a user's role or disabled flag, or approves an account
+// request (Approve).
 type UserPatch struct {
 	Role     *auth.Role
 	Disabled *bool
+	Approve  bool
 }
 
 // UpdateUser applies p, refusing to leave the instance without an active
@@ -196,7 +253,7 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, p UserPatch) (UserRef,
 		if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return err
 		}
-		u, err := one[UserRef](tx.Query(ctx, `SELECT id, username, role, disabled FROM users WHERE id = $1`, id))
+		u, err := one[UserRef](tx.Query(ctx, `SELECT `+userRefCols+` FROM users WHERE id = $1`, id))
 		if err != nil {
 			return err
 		}
@@ -216,9 +273,13 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, p UserPatch) (UserRef,
 				return fmt.Errorf("%w: the instance needs at least one active administrator", ErrConflict)
 			}
 		}
+		pending := u.Pending && !p.Approve
 		out, err = one[UserRef](tx.Query(ctx, `
-			UPDATE users SET role = $2, disabled = $3 WHERE id = $1
-			RETURNING id, username, role, disabled`, id, role, disabled))
+			UPDATE users SET role = $2, disabled = $3, pending = $4 WHERE id = $1
+			RETURNING `+userRefCols, id, role, disabled, pending))
+		if err == nil && disabled {
+			_, err = tx.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, id)
+		}
 		return err
 	})
 	return out, err

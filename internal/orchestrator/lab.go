@@ -34,7 +34,7 @@ func (j *job) static(ctx context.Context, scope store.WorkScope) error {
 		return err
 	}
 	for _, t := range scope.Targets {
-		for _, op := range j.o.opts.StaticOperations {
+		for _, op := range j.settings.StaticEnabled(j.o.opts.StaticOperations) {
 			if done[fmt.Sprintf("%d|%s", t.ID, op)] {
 				continue // finished before the run was interrupted
 			}

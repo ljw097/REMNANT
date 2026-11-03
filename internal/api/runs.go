@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/research"
 	"github.com/ljw097/remnant/internal/store"
@@ -84,7 +85,7 @@ func (s *Server) reviewPattern(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) || !validate(w, oneOf("status", in.Status, "reviewed", "validated", "rejected")) {
 		return
 	}
-	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID, s.personal(r.Context()))
+	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID, s.policy(r).SelfReview)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -122,6 +123,22 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TargetIDs, in.PatternIDs = dedupe(in.TargetIDs), dedupe(in.PatternIDs)
+	// Limits the request leaves out come from the instance's run defaults.
+	settings, err := s.store.ResearchSettings(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	d := settings.RunDefaults
+	if in.Limits.MaxWorkers == 0 {
+		in.Limits.MaxWorkers = d.MaxWorkers
+	}
+	if in.Limits.WallSeconds == 0 {
+		in.Limits.WallSeconds = d.WallSeconds
+	}
+	if in.Limits.MaxTokens == 0 {
+		in.Limits.MaxTokens = d.MaxTokens
+	}
 	limits, limitErr := in.Limits.Normalize()
 	var countErr error
 	switch {
@@ -396,8 +413,6 @@ func (s *Server) triageHypothesis(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h)
 }
 
-const approvalTTL = 24 * time.Hour
-
 func (s *Server) requestLabApproval(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -411,14 +426,18 @@ func (s *Server) requestLabApproval(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	limits := policy.DefaultLabLimits()
+	settings, err := s.store.ResearchSettings(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	limits := settings.LabDefaults
 	if in.Limits != nil {
 		limits = *in.Limits
 	}
 	var limitErr error
-	if limits.WallSeconds < 1 || limits.WallSeconds > 3600 || limits.MemoryMB < 64 || limits.MemoryMB > 16384 ||
-		limits.CPUCores < 1 || limits.CPUCores > 8 || limits.MaxProcesses < 1 || limits.MaxProcesses > 256 {
-		limitErr = badRequest("limits out of range (wall 1–3600s, memory 64–16384MB, cpu 1–8, processes 1–256)")
+	if err := limits.Validate(); err != nil {
+		limitErr = badRequest(err.Error())
 	}
 	var opErr error
 	if op, ok := worker.Operations[in.Operation]; !ok || !op.RequiresApproval {
@@ -427,7 +446,8 @@ func (s *Server) requestLabApproval(w http.ResponseWriter, r *http.Request) {
 	if !validate(w, opErr, required("summary", in.Summary, 8000), limitErr) {
 		return
 	}
-	a, err := s.store.RequestLabApproval(r.Context(), id, principal(r).UserID, in.Operation, limits, in.Summary, approvalTTL)
+	a, err := s.store.RequestLabApproval(r.Context(), id, principal(r).UserID, in.Operation, limits, in.Summary,
+		time.Duration(settings.ApprovalTTLHours)*time.Hour)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -448,7 +468,12 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		!validate(w, oneOf("decision", in.Decision, "approved", "denied"), maxLen("reviewer_note", in.ReviewerNote, 8000)) {
 		return
 	}
-	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote, s.personal(r.Context()))
+	pol := s.policy(r)
+	if pol.AdminLabApproval && principal(r).Role != auth.RoleAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "on this instance only an administrator decides lab approvals")
+		return
+	}
+	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote, pol.SelfApproval)
 	if err != nil {
 		s.fail(w, r, err)
 		return

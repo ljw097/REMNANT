@@ -3,6 +3,8 @@ import { SSEParser } from "./api/sse";
 import { contrastOnWhite, defaultPrefs, normalizePrefs } from "./prefs";
 import { match } from "./router";
 import { parseExcerpt } from "./ui/domain";
+import { classify, fallbackPresets } from "./ui/policy";
+import { passwordProblem } from "./pages/Password";
 
 describe("SSEParser", () => {
   it("parses events split across chunks and line endings", () => {
@@ -82,5 +84,23 @@ describe("contrastOnWhite", () => {
     expect(contrastOnWhite("#ffffff")).toBeCloseTo(1, 5);
     expect(contrastOnWhite("#000000")).toBeCloseTo(21, 5);
     expect(contrastOnWhite("#767676")).toBeGreaterThan(4.5);
+  });
+});
+
+describe("policy profiles", () => {
+  it("names the preset a set of rules matches", () => {
+    expect(classify({ ...fallbackPresets.team, profile: "custom" }, fallbackPresets).profile).toBe("team");
+    expect(classify({ ...fallbackPresets.managed, account_requests: false }, fallbackPresets).profile).toBe("custom");
+    expect(classify({ ...fallbackPresets.personal, session_hours: 24 }, fallbackPresets).profile).toBe("custom");
+  });
+});
+
+describe("passwordProblem", () => {
+  it("mirrors the server's rules", () => {
+    expect(passwordProblem("alice", "short", "")).toBe("password.tooShort");
+    expect(passwordProblem("alicealice", "AliceAlice", "")).toBe("password.isUsername");
+    expect(passwordProblem("alice", "long enough pw", "long enough px")).toBe("password.mismatch");
+    expect(passwordProblem("alice", "long enough pw", "long enough pw")).toBeNull();
+    expect(passwordProblem("alice", "가나다라마바사아자차", "")).toBeNull();
   });
 });
