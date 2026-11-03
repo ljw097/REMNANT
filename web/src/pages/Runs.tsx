@@ -49,13 +49,13 @@ export function RunsPage() {
       />
       <Panel>
         <div className="toolbar">
-          <select className="select" aria-label={t("runs.filter.status")} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <div className="chips" role="group" aria-label={t("runs.filter.status")}>
             {statusFilters.map((x) => (
-              <option key={x.value} value={x.value}>
+              <button key={x.value} type="button" className="chip" aria-pressed={status === x.value} onClick={() => setStatus(x.value)}>
                 {t(x.label)}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
           <select className="select" aria-label={t("runs.filter.project")} value={project} onChange={(e) => setProject(e.target.value)}>
             <option value="">{t("runs.filter.allProjects")}</option>
             {(projects.data ?? []).map((p) => (
