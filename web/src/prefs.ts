@@ -46,7 +46,7 @@ export function defaultDashboard(role: Role): PanelPref[] {
 
 export function defaultPrefs(role: Role, lang: Lang): Prefs {
   return {
-    theme: "system",
+    theme: "light",
     density: "comfortable",
     language: lang,
     startPage: role === "reviewer" ? "/review" : "/",
