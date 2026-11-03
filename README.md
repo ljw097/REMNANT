@@ -37,17 +37,20 @@ go build -o remnantd ./cmd/remnantd
 go build -o remnant-worker ./cmd/remnant-worker   # needed for REMNANT_WORKER=bwrap
 
 export REMNANT_DATABASE_URL='postgres://remnant@localhost/remnant'
-export REMNANT_MASTER_KEY="$(head -c32 /dev/urandom | base64)"   # keep this safe: it decrypts model keys
 export REMNANT_DATA_DIR=/var/lib/remnant
+# Optional: without it, the master key is created in $REMNANT_DATA_DIR/master.key (mode 0600).
+# export REMNANT_MASTER_KEY="$(head -c32 /dev/urandom | base64)"   # keep it safe: it decrypts model keys
 
 ./remnantd migrate
 ./remnantd serve
 ```
 
-Open http://localhost:8080. On first start the log prints a one-time setup code; the setup page asks for it, creates the administrator, and lets you choose **team** (two-person approvals and reviews) or **personal** (one person may approve their own work; it is recorded as such). Without the browser: `./remnantd setup -mode team -username admin` prints the administrator's token, and `remnantd create-user` adds more users. See `docs/ui.md`.
+Open http://localhost:8080. On first start the log prints a one-time setup code. The setup page asks for it, lets you pick how the instance is used — **personal** (one researcher on their own machine; approving your own requests is allowed and recorded), **team** (researchers cross-check each other) or **managed** (administrators approve lab experiments and accounts), then adjust any rule — and creates the administrator with a password. Everyone then signs in with a username and password. Without the browser: `./remnantd setup -profile personal -username me` (prints a temporary password; add `-password-stdin` to set your own). API tokens for scripts: `./remnantd create-token -username me`. See `docs/ui.md`.
+
+Scripts use an API token:
 
 ```sh
-TOKEN=rmt_...
+TOKEN=$(./remnantd create-token -username me)
 curl -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/me
 
 # register a model profile (admin)
@@ -67,7 +70,8 @@ Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`PO
 | Variable | Default | Meaning |
 |---|---|---|
 | `REMNANT_DATABASE_URL` | — (required) | PostgreSQL connection string |
-| `REMNANT_MASTER_KEY` | — (required) | base64 of 32 random bytes; encrypts model API keys |
+| `REMNANT_MASTER_KEY` | read from `REMNANT_MASTER_KEY_FILE` | base64 of 32 random bytes; encrypts model API keys |
+| `REMNANT_MASTER_KEY_FILE` | `<data dir>/master.key` | used when `REMNANT_MASTER_KEY` is unset; created (mode 0600) on first start, refused if other users can read it |
 | `REMNANT_LISTEN` | `127.0.0.1:8080` | HTTP listen address |
 | `REMNANT_DATA_DIR` | `./data` | snapshots live in `<dir>/snapshots/<key>` |
 | `REMNANT_REPO_HOSTS` | empty | comma-separated https hosts allowed for `git_repository` targets; empty disables them. The orchestrator fetches pending targets from these hosts |

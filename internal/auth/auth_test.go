@@ -10,6 +10,10 @@ import (
 
 type mapLookup map[string]Principal
 
+func (m mapLookup) LookupSession(ctx context.Context, digest string) (Principal, error) {
+	return m.LookupToken(ctx, digest)
+}
+
 func (m mapLookup) LookupToken(_ context.Context, digest string) (Principal, error) {
 	p, ok := m[digest]
 	if !ok {

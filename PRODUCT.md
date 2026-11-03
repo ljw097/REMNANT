@@ -14,19 +14,19 @@ React + Vite (user's choice), built into static assets and embedded in the `remn
 
 REMNANT is deployed at different scales and the interface must fit each without a separate edition (confirmed: "customizable"):
 
-- a solo researcher who runs everything and uses a second account only to approve lab tests;
-- a small security research team where researchers queue runs and separate reviewers triage hypotheses and approve lab experiments;
-- an internal service shared by several teams, where administrators manage model profiles, branding and updates.
+- a solo researcher running it on their own machine, who approves their own lab tests (recorded as self-approval) — the **personal** type;
+- a small security research team where researchers queue runs and separate reviewers triage hypotheses and approve lab experiments — the **team** type;
+- an internal service shared by several teams, where administrators gate lab approvals and accounts and manage model profiles, branding and updates — the **managed** type.
 
-Roles in the product are `researcher`, `reviewer` and `admin` (admin holds every role). Users sign in with a bearer token issued by an administrator (`remnantd create-user` / `create-token`).
+The type is chosen at first-run setup and presets the instance policy (self-approval, self-review, administrator-only lab approval, account requests, inactivity sign-out); each rule can be changed. Roles are `researcher`, `reviewer` and `admin` (admin holds every role). People sign in with a username and password; API tokens remain for scripts.
 
 ## Product Purpose
 
-Source-first vulnerability research: turn historical root-cause patterns into falsifiable hypotheses about pinned source snapshots, back every claim with evidence, and gate any dynamic test behind a second person's approval of an exact scope. Success is a reviewer reaching a confident validate/reject decision quickly, with the evidence and its provenance in front of them.
+Source-first vulnerability research: turn historical root-cause patterns into falsifiable hypotheses about pinned source snapshots, back every claim with evidence, and gate any dynamic test behind an approval of an exact scope — by a second person unless the instance policy allows recorded self-approval. Success is a reviewer reaching a confident validate/reject decision quickly, with the evidence and its provenance in front of them.
 
 ## Positioning
 
-Evidence and provenance over model confidence: every hypothesis points at hashed source excerpts of an immutable revision; a model's "confidence" is shown as a triage priority, never as proof; dynamic validation is local, network-less and requires approval by someone other than the requester, bound to a scope hash that goes stale when anything changes.
+Evidence and provenance over model confidence: every hypothesis points at hashed source excerpts of an immutable revision; a model's "confidence" is shown as a triage priority, never as proof; dynamic validation is local, network-less and requires approval (by someone other than the requester unless the policy records a self-approval), bound to a scope hash that goes stale when anything changes.
 
 ## Operating Context
 
@@ -39,11 +39,11 @@ Evidence and provenance over model confidence: every hypothesis points at hashed
 ## Capabilities and Constraints
 
 - The UI talks only to `/api/v1` (see `api/openapi.yaml`); it holds no credentials of its own.
-- Token kept in memory or sessionStorage, sent as `Authorization: Bearer`; never placed in URLs. SSE is read with `fetch()` streaming so the header can be sent.
+- Browser sessions are HttpOnly SameSite=Strict cookies the page never reads; state-changing requests also send `X-Remnant-Request: 1`. SSE is read with `fetch()` streaming.
 - Strict Content-Security-Policy (no inline script, no third-party origins); untrusted repository text and model output are rendered as text, never as HTML.
 - Interface language: Korean and English, switchable by the user. API terms (`revision`, run statuses, operation names) stay recognisable in both.
 - Customization (confirmed): role-aware navigation and actions; per-user preferences (theme, density, language, start page, list columns); per-user dashboard composition (show/hide/reorder cards); organization branding set by an administrator (instance name, accent colour). Preferences and branding are stored server-side.
-- Undecided: web UI for issuing tokens or managing users (today a CLI task).
+- Administrators manage users in the UI: add (temporary password shown once), reset passwords, approve account requests, issue API tokens, change roles, disable.
 
 ## Brand Commitments
 

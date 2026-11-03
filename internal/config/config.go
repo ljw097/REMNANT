@@ -2,9 +2,11 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,11 +19,15 @@ import (
 // environment variable; there is no config file to keep secrets out of the
 // working tree.
 type Config struct {
-	ListenAddr  string   // REMNANT_LISTEN, default 127.0.0.1:8080
-	DatabaseURL string   // REMNANT_DATABASE_URL, required
-	MasterKey   []byte   // REMNANT_MASTER_KEY, base64 of 32 random bytes, required
-	DataDir     string   // REMNANT_DATA_DIR, default ./data
-	RepoHosts   []string // REMNANT_REPO_HOSTS, comma separated; empty disables remote repositories
+	ListenAddr  string // REMNANT_LISTEN, default 127.0.0.1:8080
+	DatabaseURL string // REMNANT_DATABASE_URL, required
+	// MasterKey is REMNANT_MASTER_KEY (base64 of 32 random bytes). Without
+	// it the key is read from REMNANT_MASTER_KEY_FILE (default
+	// <data dir>/master.key), which is created with mode 0600 on first use
+	// so a researcher's local instance needs no key management.
+	MasterKey []byte
+	DataDir   string   // REMNANT_DATA_DIR, default ./data
+	RepoHosts []string // REMNANT_REPO_HOSTS, comma separated; empty disables remote repositories
 
 	Orchestrator            bool // REMNANT_ORCHESTRATOR, "off" disables the in-process orchestrator
 	OrchestratorConcurrency int  // REMNANT_ORCHESTRATOR_CONCURRENCY, runs worked on at once, default 2
@@ -69,7 +75,14 @@ func Load(getenv func(string) string) (Config, error) {
 
 	rawKey := getenv("REMNANT_MASTER_KEY")
 	if rawKey == "" {
-		return Config{}, errors.New("REMNANT_MASTER_KEY is required (base64 of 32 random bytes)")
+		file := getenv("REMNANT_MASTER_KEY_FILE")
+		if file == "" {
+			file = filepath.Join(cfg.DataDir, "master.key")
+		}
+		var err error
+		if rawKey, err = keyFile(file); err != nil {
+			return Config{}, fmt.Errorf("master key: %w (or set REMNANT_MASTER_KEY)", err)
+		}
 	}
 	key, err := base64.StdEncoding.DecodeString(rawKey)
 	if err != nil {
@@ -146,4 +159,44 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// keyFile reads a base64 master key from path, creating it with a fresh
+// random key (mode 0600, directory 0700) when it does not exist. A key file
+// that others can read is refused.
+func keyFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", err
+		}
+		k := make([]byte, 32)
+		if _, err := rand.Read(k); err != nil {
+			return "", err
+		}
+		enc := base64.StdEncoding.EncodeToString(k) + "\n"
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return "", err
+		}
+		if _, err := f.WriteString(enc); err != nil {
+			f.Close()
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(enc), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("%s is readable by other users; chmod 600 it", path)
+	}
+	return strings.TrimSpace(string(b)), nil
 }

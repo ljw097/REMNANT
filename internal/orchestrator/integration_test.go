@@ -795,9 +795,10 @@ func TestGitTargetIsFetchedThenAnalysed(t *testing.T) {
 	}
 }
 
-// Team mode refuses self-decisions; personal mode allows them only as a
-// recorded exception, and the database refuses an unrecorded one.
-func TestDeploymentModes(t *testing.T) {
+// Without self-approval/self-review (team) self-decisions are refused; with
+// them (personal) they are allowed only as a recorded exception, and the
+// database refuses an unrecorded one.
+func TestInstancePolicies(t *testing.T) {
 	e := setup(t)
 	o := e.orchestrator(&fakeModel{}, nil)
 	runID := e.newRun(200000)
@@ -819,7 +820,7 @@ func TestDeploymentModes(t *testing.T) {
 	if !a.SelfApproved || a.DecidedBy == nil || *a.DecidedBy != e.alice {
 		t.Fatalf("personal-mode approval = %+v", a)
 	}
-	if n := e.count(`SELECT count(*) FROM remnant.events WHERE run_id = $1 AND message LIKE '%personal mode%'`, runID); n != 1 {
+	if n := e.count(`SELECT count(*) FROM remnant.events WHERE run_id = $1 AND message LIKE '%self-approval allowed%'`, runID); n != 1 {
 		t.Error("self-approval not recorded in the timeline")
 	}
 
@@ -837,14 +838,127 @@ func TestDeploymentModes(t *testing.T) {
 		t.Fatal("a review by someone else marked as self-review")
 	}
 
-	mode, err := e.st.DeploymentMode(e.ctx)
+	pol, err := e.st.Policy(e.ctx)
 	must(t, err)
-	if mode != store.ModeTeam {
-		t.Fatalf("default mode %q, want team", mode)
+	if pol != store.Presets[store.ProfileTeam] {
+		t.Fatalf("default policy %+v, want team", pol)
 	}
-	must(t, e.st.SetDeploymentMode(e.ctx, store.ModePersonal, e.alice))
-	if mode, _ = e.st.DeploymentMode(e.ctx); mode != store.ModePersonal {
-		t.Fatalf("mode %q after switching", mode)
+	pol, err = e.st.SetPolicy(e.ctx, store.Presets[store.ProfilePersonal], e.alice)
+	must(t, err)
+	if pol.Profile != store.ProfilePersonal || !pol.SelfApproval {
+		t.Fatalf("policy %+v after switching", pol)
+	}
+	// Changing one rule of a preset makes the profile custom.
+	tweaked := store.Presets[store.ProfileManaged]
+	tweaked.AccountRequests = false
+	if pol, _ = e.st.SetPolicy(e.ctx, tweaked, e.alice); pol.Profile != store.ProfileCustom {
+		t.Fatalf("tweaked preset kept profile %q", pol.Profile)
+	}
+	if _, err := e.st.SetPolicy(e.ctx, store.Policy{Profile: "team", SessionHours: 0}, e.alice); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("session_hours 0: %v", err)
+	}
+}
+
+// Passwords, sessions, lockout and account requests.
+func TestLoginSessions(t *testing.T) {
+	e := setup(t)
+	hash, err := auth.HashPassword("correct horse battery")
+	must(t, err)
+	u, err := e.st.CreateUserWithPassword(e.ctx, "carol", auth.RoleReviewer, hash, true)
+	must(t, err)
+
+	if _, _, err := e.st.Login(e.ctx, "carol", "wrong password!", "", time.Hour); !errors.Is(err, store.ErrLogin) {
+		t.Fatalf("wrong password: %v", err)
+	}
+	if _, _, err := e.st.Login(e.ctx, "nobody", "correct horse battery", "", time.Hour); !errors.Is(err, store.ErrLogin) {
+		t.Fatalf("unknown user: %v", err)
+	}
+	p, token, err := e.st.Login(e.ctx, "carol", "correct horse battery", "test-agent", time.Hour)
+	must(t, err)
+	if !strings.HasPrefix(token, "rms_") || p.UserID != u.ID || !p.MustChangePassword || p.SessionID == 0 {
+		t.Fatalf("login %+v token %q", p, token)
+	}
+	if n := e.count(`SELECT count(*) FROM remnant.sessions WHERE token_sha256 = $1`, token); n != 0 {
+		t.Fatal("session token stored in plaintext")
+	}
+	got, err := e.st.LookupSession(e.ctx, auth.Digest(token))
+	if err != nil || got.UserID != u.ID || got.SessionID != p.SessionID {
+		t.Fatalf("lookup %+v %v", got, err)
+	}
+
+	// Changing the password keeps this session and ends the others.
+	_, other, err := e.st.Login(e.ctx, "carol", "correct horse battery", "", time.Hour)
+	must(t, err)
+	hash2, _ := auth.HashPassword("a better passphrase")
+	must(t, e.st.SetPassword(e.ctx, u.ID, hash2, false, p.SessionID))
+	if got, err := e.st.LookupSession(e.ctx, auth.Digest(token)); err != nil || got.MustChangePassword {
+		t.Fatalf("own session after change: %+v %v", got, err)
+	}
+	if _, err := e.st.LookupSession(e.ctx, auth.Digest(other)); err == nil {
+		t.Fatal("other session survived a password change")
+	}
+
+	// Idle sessions end.
+	if _, err := e.db.Exec(e.ctx, `UPDATE remnant.sessions SET last_seen_at = now() - interval '2 hours' WHERE id = $1`, p.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.LookupSession(e.ctx, auth.Digest(token)); err == nil {
+		t.Fatal("idle session accepted")
+	}
+
+	// Logout ends a session; disabling a user ends all of theirs.
+	_, t3, err := e.st.Login(e.ctx, "carol", "a better passphrase", "", time.Hour)
+	must(t, err)
+	p3, _ := e.st.LookupSession(e.ctx, auth.Digest(t3))
+	must(t, e.st.Logout(e.ctx, p3.SessionID))
+	if _, err := e.st.LookupSession(e.ctx, auth.Digest(t3)); err == nil {
+		t.Fatal("session survived logout")
+	}
+	_, t4, _ := e.st.Login(e.ctx, "carol", "a better passphrase", "", time.Hour)
+	off := true
+	_, err = e.st.UpdateUser(e.ctx, u.ID, store.UserPatch{Disabled: &off})
+	must(t, err)
+	if _, err := e.st.LookupSession(e.ctx, auth.Digest(t4)); err == nil {
+		t.Fatal("disabled user's session accepted")
+	}
+	if _, _, err := e.st.Login(e.ctx, "carol", "a better passphrase", "", time.Hour); !errors.Is(err, store.ErrLogin) {
+		t.Fatalf("disabled user signed in: %v", err)
+	}
+
+	// Ten wrong passwords lock the account, even against the right one.
+	hash3, _ := auth.HashPassword("dave's passphrase")
+	_, err = e.st.CreateUserWithPassword(e.ctx, "dave", auth.RoleResearcher, hash3, false)
+	must(t, err)
+	for range 10 {
+		_, _, _ = e.st.Login(e.ctx, "dave", "guess guess guess", "", time.Hour)
+	}
+	if _, _, err := e.st.Login(e.ctx, "dave", "dave's passphrase", "", time.Hour); !errors.Is(err, store.ErrLoginLocked) {
+		t.Fatalf("locked account: %v", err)
+	}
+
+	// An account request cannot sign in until approved; declining deletes it.
+	hash4, _ := auth.HashPassword("erin's passphrase")
+	req, err := e.st.RequestAccount(e.ctx, "erin", hash4)
+	must(t, err)
+	if !req.Pending || req.Role != "researcher" {
+		t.Fatalf("request %+v", req)
+	}
+	if _, _, err := e.st.Login(e.ctx, "erin", "erin's passphrase", "", time.Hour); !errors.Is(err, store.ErrLoginPending) {
+		t.Fatalf("pending sign-in: %v", err)
+	}
+	if _, _, err := e.st.Login(e.ctx, "erin", "not erin's password", "", time.Hour); !errors.Is(err, store.ErrLogin) {
+		t.Fatalf("pending account with a wrong password: %v", err)
+	}
+	ref, err := e.st.UpdateUser(e.ctx, req.ID, store.UserPatch{Approve: true})
+	must(t, err)
+	if ref.Pending {
+		t.Fatal("approval left the account pending")
+	}
+	if _, _, err := e.st.Login(e.ctx, "erin", "erin's passphrase", "", time.Hour); err != nil {
+		t.Fatalf("approved sign-in: %v", err)
+	}
+	if err := e.st.DeleteAccountRequest(e.ctx, req.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleting an approved account: %v", err)
 	}
 }
 
@@ -859,26 +973,30 @@ func TestFirstRunSetup(t *testing.T) {
 		t.Fatalf("setup code %q", code)
 	}
 
-	_, _, err = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModePersonal, Username: "solo", Code: "AAAA-BBBB-CCCC"})
+	hash, err := auth.HashPassword("solo passphrase")
+	must(t, err)
+	personal := store.Presets[store.ProfilePersonal]
+	team := store.Presets[store.ProfileTeam]
+	_, err = e.st.Setup(e.ctx, store.SetupInput{Policy: personal, Username: "solo", PasswordHash: hash, Code: "AAAA-BBBB-CCCC"})
 	if !errors.Is(err, store.ErrSetupCode) {
 		t.Fatalf("wrong code: %v", err)
 	}
 	if n := e.count(`SELECT count(*) FROM remnant.instance_settings WHERE key = 'setup_code' AND (value->>'failures')::int = 1`); n != 1 {
 		t.Fatal("failed attempt not counted")
 	}
-	u, token, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModePersonal, Username: "solo", Code: strings.ToLower(code)})
+	u, err := e.st.Setup(e.ctx, store.SetupInput{Policy: personal, Username: "solo", PasswordHash: hash, Code: strings.ToLower(code)})
 	must(t, err)
-	if u.Role != "admin" || !strings.HasPrefix(token, "rmt_") {
-		t.Fatalf("setup user %+v token %q", u, token)
+	if u.Role != "admin" || u.MustChangePassword {
+		t.Fatalf("setup user %+v", u)
 	}
-	p, err := e.st.LookupToken(e.ctx, auth.Digest(token))
+	p, _, err := e.st.Login(e.ctx, "solo", "solo passphrase", "", time.Hour)
 	if err != nil || p.UserID != u.ID {
-		t.Fatalf("setup token does not authenticate: %v", err)
+		t.Fatalf("setup administrator cannot sign in: %v", err)
 	}
-	if mode, _ := e.st.DeploymentMode(e.ctx); mode != store.ModePersonal {
-		t.Fatalf("mode %q", mode)
+	if pol, _ := e.st.Policy(e.ctx); pol != personal {
+		t.Fatalf("policy %+v", pol)
 	}
-	if _, _, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "second", TrustedLocal: true}); !errors.Is(err, store.ErrSetupDone) {
+	if _, err := e.st.Setup(e.ctx, store.SetupInput{Policy: team, Username: "second", PasswordHash: hash, TrustedLocal: true}); !errors.Is(err, store.ErrSetupDone) {
 		t.Fatalf("second setup: %v", err)
 	}
 	if n := e.count(`SELECT count(*) FROM remnant.instance_settings WHERE key = 'setup_code'`); n != 0 {
@@ -891,18 +1009,20 @@ func TestFirstRunSetup(t *testing.T) {
 	}
 	code, _ = e.st.NewSetupCode(e.ctx, time.Hour)
 	for range 10 {
-		_, _, _ = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "x1", Code: "WRONG"})
+		_, _ = e.st.Setup(e.ctx, store.SetupInput{Policy: team, Username: "x1", PasswordHash: hash, Code: "WRONG"})
 	}
-	if _, _, err := e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "x1", Code: code}); !errors.Is(err, store.ErrSetupCode) {
+	if _, err := e.st.Setup(e.ctx, store.SetupInput{Policy: team, Username: "x1", PasswordHash: hash, Code: code}); !errors.Is(err, store.ErrSetupCode) {
 		t.Fatalf("code after 10 failures: %v", err)
 	}
 
 	// The last active administrator cannot be demoted or disabled.
-	_, token, err = e.st.Setup(e.ctx, store.SetupInput{Mode: store.ModeTeam, Username: "boss", TrustedLocal: true})
+	boss, err := e.st.Setup(e.ctx, store.SetupInput{Policy: team, Username: "boss", PasswordHash: hash, MustChange: true, TrustedLocal: true})
 	must(t, err)
-	boss, _ := e.st.LookupToken(e.ctx, auth.Digest(token))
+	if !boss.MustChangePassword {
+		t.Fatal("CLI setup with a generated password does not require a change")
+	}
 	off := true
-	if _, err := e.st.UpdateUser(e.ctx, boss.UserID, store.UserPatch{Disabled: &off}); !errors.Is(err, store.ErrConflict) {
+	if _, err := e.st.UpdateUser(e.ctx, boss.ID, store.UserPatch{Disabled: &off}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("disabling the last admin: %v", err)
 	}
 }

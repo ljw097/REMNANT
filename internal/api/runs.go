@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/policy"
 	"github.com/ljw097/remnant/internal/research"
 	"github.com/ljw097/remnant/internal/store"
@@ -84,7 +85,7 @@ func (s *Server) reviewPattern(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) || !validate(w, oneOf("status", in.Status, "reviewed", "validated", "rejected")) {
 		return
 	}
-	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID, s.personal(r.Context()))
+	p, err := s.store.ReviewPattern(r.Context(), id, in.Status, principal(r).UserID, s.policy(r).SelfReview)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -448,7 +449,12 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		!validate(w, oneOf("decision", in.Decision, "approved", "denied"), maxLen("reviewer_note", in.ReviewerNote, 8000)) {
 		return
 	}
-	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote, s.personal(r.Context()))
+	pol := s.policy(r)
+	if pol.AdminLabApproval && principal(r).Role != auth.RoleAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "on this instance only an administrator decides lab approvals")
+		return
+	}
+	a, err := s.store.DecideApproval(r.Context(), id, principal(r).UserID, in.Decision == "approved", in.ReviewerNote, pol.SelfApproval)
 	if err != nil {
 		s.fail(w, r, err)
 		return

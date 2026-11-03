@@ -6,12 +6,16 @@ import (
 )
 
 type User struct {
-	ID        int64     `db:"id" json:"id"`
-	Username  string    `db:"username" json:"username"`
-	Role      string    `db:"role" json:"role"`
-	Disabled  bool      `db:"disabled" json:"disabled"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	ID                 int64     `db:"id" json:"id"`
+	Username           string    `db:"username" json:"username"`
+	Role               string    `db:"role" json:"role"`
+	Disabled           bool      `db:"disabled" json:"disabled"`
+	Pending            bool      `db:"pending" json:"pending"`
+	MustChangePassword bool      `db:"must_change_password" json:"must_change_password"`
+	CreatedAt          time.Time `db:"created_at" json:"created_at"`
 }
+
+const userCols = `id, username, role, disabled, pending, must_change_password, created_at`
 
 // LLMProfile is the API view of a provider profile; it never carries key
 // material.

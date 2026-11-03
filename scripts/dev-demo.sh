@@ -7,9 +7,10 @@
 # The model API is scripts/fake_anthropic.py (no network, no real key). When
 # bubblewrap and a user systemd scope are available, the sandboxed worker runs
 # real analyzers and an ASan lab harness on the demo snapshot. Everything the
-# demo creates is labelled synthetic. REMNANT_DEMO_MODE=personal sets the
-# instance up for one person (self-approval) instead of a team. Stop it with
-# Ctrl-C.
+# demo creates is labelled synthetic. REMNANT_DEMO_PROFILE=personal|managed
+# sets the instance up for one person (self-approval) or an administrator-
+# gated organization instead of a team. Every demo account's password is
+# "synthetic-demo" (demo only). Stop it with Ctrl-C.
 set -u
 : "${REMNANT_DEMO_DATABASE_URL:?set REMNANT_DEMO_DATABASE_URL to a disposable database}"
 cd "$(dirname "$0")/.."
@@ -70,13 +71,19 @@ echo 'cc -fsanitize=address -g -O0 -o "$TMPDIR/t" src/parser.c test/main.c && "$
 
 python3 -I scripts/fake_anthropic.py 58191 & PIDS+=($!)
 $D/remnantd migrate 2>/dev/null || exit 1
-if [ "${REMNANT_DEMO_MODE:-team}" = personal ]; then
-  ADMIN=$($D/remnantd setup -mode personal -username solo -name "REMNANT demo (synthetic)" 2>/dev/null)
-  RITA=$ADMIN VIC=$ADMIN
+PROFILE=${REMNANT_DEMO_PROFILE:-${REMNANT_DEMO_MODE:-team}}
+PW=synthetic-demo
+# The script drives the API with tokens; people sign in with the password.
+login() { echo $PW | $D/remnantd reset-password -username "$1" -password-stdin 2>/dev/null; $D/remnantd create-token -username "$1" -name demo 2>/dev/null; }
+if [ "$PROFILE" = personal ]; then
+  echo $PW | $D/remnantd setup -profile personal -username solo -name "REMNANT demo (synthetic)" -password-stdin 2>/dev/null || exit 1
+  ADMIN=$(login solo); RITA=$ADMIN VIC=$ADMIN; USERS="solo"
 else
-  ADMIN=$($D/remnantd setup -mode team -username admin -name "REMNANT demo (synthetic)" 2>/dev/null)
-  RITA=$($D/remnantd create-user -username rita -role researcher 2>/dev/null)
-  VIC=$($D/remnantd create-user -username vic -role reviewer 2>/dev/null)
+  echo $PW | $D/remnantd setup -profile "$PROFILE" -username admin -name "REMNANT demo (synthetic)" -password-stdin 2>/dev/null || exit 1
+  ADMIN=$(login admin)
+  $D/remnantd create-user -username rita -role researcher >/dev/null 2>&1; RITA=$(login rita)
+  $D/remnantd create-user -username vic -role reviewer >/dev/null 2>&1; VIC=$(login vic)
+  USERS="admin (administrator), rita (researcher), vic (reviewer)"
 fi
 $D/remnantd serve 2>$D/serve.log & PIDS+=($!)
 for _ in $(seq 50); do curl -sf localhost:$PORT/healthz >/dev/null && break; sleep 0.2; done
@@ -105,12 +112,10 @@ api $RITA POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"pattern_ids\
 
 cat <<EOF
 
-REMNANT demo is running at http://127.0.0.1:$PORT  (synthetic data; mode: ${REMNANT_DEMO_MODE:-team}; worker: ${REMNANT_WORKER:-off})
-Sign in with one of these tokens:
-  admin       $ADMIN
-  researcher  $RITA
-  reviewer    $VIC
-A hypothesis waits for lab approval: sign in as the reviewer and open Lab approvals.
+REMNANT demo is running at http://127.0.0.1:$PORT  (synthetic data; profile: $PROFILE; worker: ${REMNANT_WORKER:-off})
+Sign in as $USERS
+with the password: $PW
+A hypothesis waits for lab approval: open Lab approvals as the reviewer (or the administrator in the managed profile).
 Press Ctrl-C to stop.
 EOF
 wait

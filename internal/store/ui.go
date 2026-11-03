@@ -140,14 +140,18 @@ func (s *Store) Summary(ctx context.Context) (Summary, error) {
 
 // UserRef is the public view of a user: enough to show who did what.
 type UserRef struct {
-	ID       int64  `db:"id" json:"id"`
-	Username string `db:"username" json:"username"`
-	Role     string `db:"role" json:"role"`
-	Disabled bool   `db:"disabled" json:"disabled"`
+	ID          int64  `db:"id" json:"id"`
+	Username    string `db:"username" json:"username"`
+	Role        string `db:"role" json:"role"`
+	Disabled    bool   `db:"disabled" json:"disabled"`
+	Pending     bool   `db:"pending" json:"pending"`
+	HasPassword bool   `db:"has_password" json:"has_password"`
 }
 
+const userRefCols = `id, username, role, disabled, pending, password_hash IS NOT NULL AS has_password`
+
 func (s *Store) ListUsers(ctx context.Context) ([]UserRef, error) {
-	return collect[UserRef](s.pool.Query(ctx, `SELECT id, username, role, disabled FROM users ORDER BY username`))
+	return collect[UserRef](s.pool.Query(ctx, `SELECT `+userRefCols+` FROM users ORDER BY pending DESC, username`))
 }
 
 func (s *Store) GetPattern(ctx context.Context, id int64) (Pattern, error) {

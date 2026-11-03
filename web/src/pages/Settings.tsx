@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Frame } from "../App";
-import { patch, post, put } from "../api/client";
+import { del, patch, post, put } from "../api/client";
 import { useApi } from "../hooks";
 import { useI18n, type Key, type Lang } from "../i18n";
 import { Link } from "../router";
 import { appName, useSession } from "../session";
-import type { Branding, LLMProfile, Role, UserRef } from "../api/types";
+import type { Branding, LLMProfile, InstancePolicy, Role, UserRef } from "../api/types";
+import { PolicyEditor } from "../ui/policy";
+import { NewPasswordFields, PasswordForm, passwordProblem } from "./Password";
 import { columnChoices, contrastOnWhite, startPages, type ColumnSet, type Prefs } from "../prefs";
 import { Alert, Button, ConfirmButton, Drawer, Empty, errorText, Field, PageHead, Panel, Segmented, SkeletonRows, Time, useToast } from "../ui/components";
 import { DashboardEditor } from "./Dashboard";
@@ -159,6 +161,7 @@ function DashboardSection() {
 function AccountSection() {
   const { t } = useI18n();
   const { me, signOut } = useSession();
+  const toast = useToast();
   return (
     <Panel title={t("settings.account")}>
       <div className="panel-body stack" style={{ gap: 14 }}>
@@ -172,12 +175,16 @@ function AccountSection() {
           </div>
         </div>
         <p className="small ink-2 prose">{t(`role.${me.role}.explain` as Key)}</p>
-        <p className="small muted prose">{t("account.tokenNote")}</p>
         <div>
           <Button icon="logout" onClick={signOut}>
             {t("nav.signOut")}
           </Button>
         </div>
+      </div>
+      <div className="panel-body stack" style={{ gap: 12, borderTop: "1px solid var(--rule)" }}>
+        <h3>{t("password.change")}</h3>
+        <p className="small muted prose">{t("password.changeNote")}</p>
+        <PasswordForm onDone={() => toast(t("password.changed"))} />
       </div>
     </Panel>
   );
@@ -493,18 +500,21 @@ function SystemSection() {
 
 function ModeSection() {
   const { t } = useI18n();
-  const { mode, setMode } = useSession();
+  const { policy, presets, setPolicy } = useSession();
   const users = useApi<UserRef[]>("/users");
   const toast = useToast();
+  const [draft, setDraft] = useState<InstancePolicy>(policy);
   const [busy, setBusy] = useState(false);
-  const target = mode === "team" ? "personal" : "team";
-  const active = (users.data ?? []).filter((u) => !u.disabled).length;
-  const change = async () => {
+  useEffect(() => setDraft(policy), [policy]);
+  const active = (users.data ?? []).filter((u) => !u.disabled && !u.pending).length;
+  const changed = JSON.stringify(draft) !== JSON.stringify(policy);
+  const weakens = (draft.self_approval && !policy.self_approval) || (draft.self_review && !policy.self_review);
+  const save = async () => {
     setBusy(true);
     try {
-      await put("/instance", { mode: target });
-      setMode(target);
-      toast(t("mode.changed", { mode: t(`mode.${target}` as Key) }));
+      const r = await put<{ policy: InstancePolicy }>("/instance", { policy: draft });
+      setPolicy(r.policy);
+      toast(t("policy.saved", { profile: t(`profile.${r.policy.profile}` as Key) }));
     } catch (e) {
       toast(errorText(e, t), "bad");
     } finally {
@@ -514,33 +524,28 @@ function ModeSection() {
   return (
     <Panel title={t("settings.mode")} meta={t("mode.sub")}>
       <div className="panel-body stack" style={{ gap: 16 }}>
-        <div className="mode-cards">
-          {(["personal", "team"] as const).map((m) => (
-            <div key={m} className="mode-card" aria-current={mode === m} style={mode === m ? { borderColor: "var(--info)" } : undefined}>
-              <span className="row" style={{ gap: 10 }}>
-                <Icon name={m === "team" ? "users" : "user"} size={18} />
-                <strong>{t(`mode.${m}` as Key)}</strong>
-                {mode === m ? <span className="state" data-tone="info" data-form="solid">{t("mode.current")}</span> : null}
-              </span>
-              <span className="small ink-2">{t(`mode.${m}.for` as Key)}</span>
-              <ul className="bullets small">
-                <li>{t(`mode.${m}.approval` as Key)}</li>
-                <li>{t(`mode.${m}.patterns` as Key)}</li>
-                <li>{t(`mode.${m}.users` as Key)}</li>
-              </ul>
-            </div>
-          ))}
-        </div>
-        {target === "personal" && active > 1 ? (
+        <PolicyEditor value={draft} presets={presets ?? undefined} onChange={setDraft} />
+        {weakens && active > 1 ? (
           <Alert tone="warn" icon="alert">
             {t("mode.personalWithTeam", { n: active })}
           </Alert>
         ) : null}
         <p className="small muted prose">{t("mode.changeNote")}</p>
-        <div>
-          <ConfirmButton icon="shield" loading={busy} confirmLabel={t("mode.switchConfirm", { mode: t(`mode.${target}` as Key) })} onConfirm={() => void change()}>
-            {t("mode.switchTo", { mode: t(`mode.${target}` as Key) })}
-          </ConfirmButton>
+        <div className="row">
+          {weakens ? (
+            <ConfirmButton variant="primary" icon="shield" loading={busy} disabled={!changed} confirmLabel={t("policy.confirmWeaken")} onConfirm={() => void save()}>
+              {t("policy.save")}
+            </ConfirmButton>
+          ) : (
+            <Button variant="primary" icon="shield" loading={busy} disabled={!changed} onClick={() => void save()}>
+              {t("policy.save")}
+            </Button>
+          )}
+          {changed ? (
+            <Button variant="ghost" onClick={() => setDraft(policy)}>
+              {t("common.cancel")}
+            </Button>
+          ) : null}
         </div>
       </div>
     </Panel>
@@ -549,25 +554,42 @@ function ModeSection() {
 
 function UsersSection() {
   const { t } = useI18n();
-  const { me, mode } = useSession();
+  const { me, policy } = useSession();
   const users = useApi<UserRef[]>("/users");
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [issued, setIssued] = useState<{ username: string; token: string } | null>(null);
+  const [issued, setIssued] = useState<{ username: string; secret: string; kind: "token" | "password" } | null>(null);
 
-  const update = async (u: UserRef, p: { role?: Role; disabled?: boolean }) => {
+  const update = async (u: UserRef, p: { role?: Role; disabled?: boolean; approve?: boolean }) => {
     try {
       await patch(`/users/${u.id}`, p);
       users.reload();
-      toast(t("users.updated", { name: u.username }));
+      toast(t(p.approve ? "users.approved" : "users.updated", { name: u.username }));
     } catch (e) {
       toast(errorText(e, t), "bad");
     }
   };
   const newToken = async (u: UserRef) => {
     try {
-      const r = await post<{ token: string }>(`/users/${u.id}/tokens`, { name: "web" });
-      setIssued({ username: u.username, token: r.token });
+      const r = await post<{ token: string }>(`/users/${u.id}/tokens`, { name: "api" });
+      setIssued({ username: u.username, secret: r.token, kind: "token" });
+    } catch (e) {
+      toast(errorText(e, t), "bad");
+    }
+  };
+  const resetPassword = async (u: UserRef) => {
+    try {
+      const r = await post<{ temporary_password: string }>(`/users/${u.id}/password`);
+      setIssued({ username: u.username, secret: r.temporary_password, kind: "password" });
+    } catch (e) {
+      toast(errorText(e, t), "bad");
+    }
+  };
+  const decline = async (u: UserRef) => {
+    try {
+      await del(`/users/${u.id}`);
+      users.reload();
+      toast(t("users.declined", { name: u.username }));
     } catch (e) {
       toast(errorText(e, t), "bad");
     }
@@ -583,7 +605,7 @@ function UsersSection() {
         </Button>
       }
     >
-      {mode === "personal" ? (
+      {policy.self_approval || policy.self_review ? (
         <div className="panel-body">
           <Alert tone="info" icon="user">
             {t("users.personalNote")}
@@ -592,7 +614,7 @@ function UsersSection() {
       ) : null}
       {issued ? (
         <div className="panel-body">
-          <TokenOnce username={issued.username} token={issued.token} onDone={() => setIssued(null)} />
+          <SecretOnce username={issued.username} secret={issued.secret} kind={issued.kind} onDone={() => setIssued(null)} />
         </div>
       ) : null}
       {users.loading && !users.data ? (
@@ -616,7 +638,7 @@ function UsersSection() {
                   {u.id === me.user_id ? <span className="sub">{t("users.you")}</span> : null}
                 </td>
                 <td>
-                  <select className="select" style={{ width: "auto" }} aria-label={t("users.role")} value={u.role} disabled={u.disabled} onChange={(e) => void update(u, { role: e.target.value as Role })}>
+                  <select className="select" style={{ width: "auto" }} aria-label={t("users.role")} value={u.role} disabled={u.disabled || u.pending} onChange={(e) => void update(u, { role: e.target.value as Role })}>
                     {(["researcher", "reviewer", "admin"] as const).map((r) => (
                       <option key={r} value={r}>
                         {t(`role.${r}` as Key)}
@@ -625,7 +647,11 @@ function UsersSection() {
                   </select>
                 </td>
                 <td>
-                  {u.disabled ? (
+                  {u.pending ? (
+                    <span className="state" data-tone="warn" data-form="waiting">
+                      {t("users.pending")}
+                    </span>
+                  ) : u.disabled ? (
                     <span className="state" data-tone="muted" data-form="stopped">
                       {t("users.disabled")}
                     </span>
@@ -636,13 +662,28 @@ function UsersSection() {
                   )}
                 </td>
                 <td className="right">
-                  <div className="row" style={{ justifyContent: "flex-end" }}>
-                    {!u.disabled ? (
-                      <Button size="sm" icon="key" onClick={() => void newToken(u)}>
+                  <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+                    {u.pending ? (
+                      <>
+                        <Button size="sm" variant="primary" icon="check" onClick={() => void update(u, { approve: true })}>
+                          {t("users.approve")}
+                        </Button>
+                        <ConfirmButton size="sm" variant="ghost" confirmLabel={t("users.declineConfirm")} onConfirm={() => void decline(u)}>
+                          {t("users.decline")}
+                        </ConfirmButton>
+                      </>
+                    ) : null}
+                    {!u.disabled && !u.pending && u.id !== me.user_id ? (
+                      <ConfirmButton size="sm" icon="lock" confirmLabel={t("users.resetConfirm")} onConfirm={() => void resetPassword(u)}>
+                        {t("users.resetPassword")}
+                      </ConfirmButton>
+                    ) : null}
+                    {!u.disabled && !u.pending ? (
+                      <Button size="sm" variant="ghost" icon="key" onClick={() => void newToken(u)}>
                         {t("users.issueToken")}
                       </Button>
                     ) : null}
-                    {u.disabled ? (
+                    {u.pending ? null : u.disabled ? (
                       <Button size="sm" variant="ghost" onClick={() => void update(u, { disabled: false })}>
                         {t("users.enable")}
                       </Button>
@@ -662,26 +703,28 @@ function UsersSection() {
       <UserForm
         open={open}
         onClose={() => setOpen(false)}
-        onCreated={(username, token) => {
+        onCreated={(username, temporary) => {
           users.reload();
-          setIssued({ username, token });
+          if (temporary) setIssued({ username, secret: temporary, kind: "password" });
+          else toast(t("users.created", { name: username }));
         }}
       />
     </Panel>
   );
 }
 
-function TokenOnce({ username, token, onDone }: { username: string; token: string; onDone: () => void }) {
+/** A temporary password or API token, shown once right after it is issued. */
+function SecretOnce({ username, secret, kind, onDone }: { username: string; secret: string; kind: "token" | "password"; onDone: () => void }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
     <div className="stack" style={{ gap: 8 }}>
       <Alert tone="warn" icon="key">
-        {t("users.tokenOnce", { name: username })}
+        {kind === "password" ? t("users.passwordOnce", { name: username }) : t("users.tokenOnce", { name: username })}
       </Alert>
       <div className="row" style={{ flexWrap: "nowrap" }}>
-        <input className="input mono" readOnly value={token} aria-label={t("signin.token")} onFocus={(e) => e.target.select()} />
-        <Button icon={copied ? "check" : "copy"} onClick={() => void navigator.clipboard?.writeText(token).then(() => setCopied(true))}>
+        <input className="input mono" readOnly value={secret} aria-label={kind === "password" ? t("password.temporary") : t("users.apiToken")} onFocus={(e) => e.target.select()} />
+        <Button icon={copied ? "check" : "copy"} onClick={() => void navigator.clipboard?.writeText(secret).then(() => setCopied(true))}>
           {copied ? t("common.copied") : t("common.copy")}
         </Button>
         <Button variant="ghost" onClick={onDone}>
@@ -692,21 +735,26 @@ function TokenOnce({ username, token, onDone }: { username: string; token: strin
   );
 }
 
-function UserForm({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (username: string, token: string) => void }) {
+function UserForm({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (username: string, temporaryPassword?: string) => void }) {
   const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<Role>("researcher");
+  const [setOwn, setSetOwn] = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const ok = /^[a-z0-9][a-z0-9._-]{1,63}$/.test(username);
+  const ok = /^[a-z0-9][a-z0-9._-]{1,63}$/.test(username) && (!setOwn || (!!confirm && !passwordProblem(username, password, confirm)));
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      const r = await post<{ token: string }>("/users", { username, role });
-      onCreated(username, r.token);
+      const r = await post<{ temporary_password?: string }>("/users", { username, role, password: setOwn ? password : "" });
+      onCreated(username, r.temporary_password);
       setUsername("");
+      setPassword("");
+      setConfirm("");
       onClose();
     } catch (err) {
       setError(errorText(err, t));
@@ -746,6 +794,20 @@ function UserForm({ open, onClose, onCreated }: { open: boolean; onClose: () => 
           />
           <span className="hint">{t(`role.${role}.explain` as Key)}</span>
         </div>
+        <div className="field">
+          <span className="label">{t("users.password")}</span>
+          <Segmented<"temp" | "own">
+            label={t("users.password")}
+            value={setOwn ? "own" : "temp"}
+            onChange={(v) => setSetOwn(v === "own")}
+            options={[
+              { value: "temp", label: t("users.passwordTemp") },
+              { value: "own", label: t("users.passwordOwn") },
+            ]}
+          />
+          <span className="hint">{setOwn ? t("users.passwordOwnHint") : t("users.passwordTempHint")}</span>
+        </div>
+        {setOwn ? <NewPasswordFields username={username} value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm} /> : null}
         {error ? (
           <Alert tone="bad" icon="alert">
             {error}

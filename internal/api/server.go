@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/buildinfo"
@@ -24,15 +25,22 @@ type Server struct {
 	cfg     config.Config
 	log     *slog.Logger
 	updates *update.Manager
+	// limiter throttles password guesses per client; requests throttles
+	// account requests.
+	limiter  *limiter
+	requests *limiter
 }
 
 // New builds the HTTP handler. updates may be nil (no update endpoints
 // beyond the version); ui is the built web app served at /.
 func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.Manager, ui fs.FS) http.Handler {
-	s := &Server{store: st, cfg: cfg, log: log, updates: updates}
+	s := &Server{store: st, cfg: cfg, log: log, updates: updates,
+		limiter: newLimiter(20, time.Minute), requests: newLimiter(5, time.Hour)}
 
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/me", s.me)
+	api.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	api.HandleFunc("PUT /api/v1/me/password", s.changePassword)
 	api.HandleFunc("GET /api/v1/system/version", s.version)
 	api.HandleFunc("GET /api/v1/me/preferences", s.getPreferences)
 	api.HandleFunc("PUT /api/v1/me/preferences", s.setPreferences)
@@ -43,6 +51,8 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 	api.HandleFunc("GET /api/v1/users", s.listUsers)
 	api.HandleFunc("POST /api/v1/users", s.requireRole(s.createUser, auth.RoleAdmin))
 	api.HandleFunc("PATCH /api/v1/users/{id}", s.requireRole(s.updateUser, auth.RoleAdmin))
+	api.HandleFunc("DELETE /api/v1/users/{id}", s.requireRole(s.deleteUser, auth.RoleAdmin))
+	api.HandleFunc("POST /api/v1/users/{id}/password", s.requireRole(s.resetPassword, auth.RoleAdmin))
 	api.HandleFunc("POST /api/v1/users/{id}/tokens", s.requireRole(s.issueToken, auth.RoleAdmin))
 	api.HandleFunc("GET /api/v1/instance", s.getInstance)
 	api.HandleFunc("PUT /api/v1/instance", s.requireRole(s.setInstance, auth.RoleAdmin))
@@ -89,16 +99,34 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	// Public: the sign-in and first-run pages need these before any token exists.
+	// Public: the sign-in and first-run pages need these before anyone is
+	// signed in. Their POSTs carry no cookie authority but still require the
+	// same-origin header, so another site cannot drive them from a browser.
 	root.HandleFunc("GET /api/v1/branding", s.getBranding)
-	root.HandleFunc("GET /api/v1/setup", s.getSetup)
-	root.HandleFunc("POST /api/v1/setup", s.postSetup)
-	root.Handle("/api/", auth.Middleware(st, api))
+	root.HandleFunc("GET /api/v1/auth/status", s.authStatus)
+	root.HandleFunc("GET /api/v1/setup", s.authStatus)
+	root.Handle("POST /api/v1/setup", sameOrigin(s.postSetup))
+	root.Handle("POST /api/v1/auth/login", sameOrigin(s.login))
+	root.Handle("POST /api/v1/auth/request-account", sameOrigin(s.requestAccount))
+	root.Handle("/api/", auth.Middleware(st, passwordGate(api)))
 	if ui != nil {
 		// Registered without a method: "GET /" would conflict with "/api/".
 		root.Handle("/", staticUI(ui))
 	}
-	return securityHeaders(root)
+	return hostGuard(cfg.ListenAddr, securityHeaders(root))
+}
+
+// sameOrigin rejects browser requests to public POST endpoints that do not
+// come from this origin (see auth.SameOriginRequest). Non-browser clients
+// send the header themselves.
+func sameOrigin(h http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !auth.SameOriginRequest(r) {
+			writeError(w, http.StatusForbidden, "forbidden", "cross-site request refused; send "+auth.CSRFHeader+": 1")
+			return
+		}
+		h(w, r)
+	})
 }
 
 func securityHeaders(next http.Handler) http.Handler {

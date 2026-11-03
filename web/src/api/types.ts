@@ -6,6 +6,30 @@ export interface Principal {
   user_id: number;
   username: string;
   role: Role;
+  /** Signed in with a temporary password: only changing it is allowed. */
+  must_change_password: boolean;
+}
+
+export type Profile = "personal" | "team" | "managed" | "custom";
+
+/** How the instance is used; see store.Policy. */
+export interface InstancePolicy {
+  profile: Profile;
+  self_approval: boolean;
+  self_review: boolean;
+  admin_lab_approval: boolean;
+  account_requests: boolean;
+  session_hours: number;
+}
+
+export type Presets = Record<Exclude<Profile, "custom">, InstancePolicy>;
+
+export interface AuthStatus {
+  /** Who the session cookie belongs to; null when nobody is signed in. */
+  user: Principal | null;
+  setup_required: boolean;
+  account_requests: boolean;
+  presets: Presets;
 }
 
 export type RunStatus =
@@ -316,4 +340,7 @@ export interface UserRef {
   username: string;
   role: Role;
   disabled: boolean;
+  /** Requested on the sign-in page; waits for an administrator. */
+  pending: boolean;
+  has_password: boolean;
 }

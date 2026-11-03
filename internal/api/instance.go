@@ -1,7 +1,7 @@
 package api
 
 import (
-	"context"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -20,39 +20,76 @@ func checkUsername(u string) error {
 	return nil
 }
 
-// personal reports whether one person may decide their own requests.
-func (s *Server) personal(ctx context.Context) bool {
-	mode, err := s.store.DeploymentMode(ctx)
-	return err == nil && mode == store.ModePersonal
+func checkPassword(username, password string) error {
+	if err := auth.CheckPassword(username, password); err != nil {
+		return badRequest(err.Error())
+	}
+	return nil
 }
 
-// getSetup is public: the web UI asks it before anyone can sign in.
-func (s *Server) getSetup(w http.ResponseWriter, r *http.Request) {
+// policy returns the instance policy, or the team preset if it cannot be
+// read: when in doubt, keep the two-person rules.
+func (s *Server) policy(r *http.Request) store.Policy {
+	p, err := s.store.Policy(r.Context())
+	if err != nil {
+		s.log.Error("reading instance policy", "err", err)
+		return store.Presets[store.ProfileTeam]
+	}
+	return p
+}
+
+// authStatus is public: the web app asks it on load who is signed in (by
+// the session cookie, if any), and whether to show first-run setup or the
+// account request form.
+func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	n, err := s.store.UserCount(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"required": n == 0})
+	var user *auth.Principal
+	if token, ok := auth.SessionTokenFrom(r); ok {
+		if p, err := s.store.LookupSession(r.Context(), auth.Digest(token)); err == nil {
+			user = &p
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":             user,
+		"setup_required":   n == 0,
+		"required":         n == 0, // GET /setup compatibility
+		"account_requests": n > 0 && s.policy(r).AccountRequests,
+		"presets":          store.Presets,
+	})
 }
 
-// postSetup creates the first administrator. It needs the one-time code
-// remnantd printed to its log, and works only while there are no users.
+// postSetup creates the first administrator, records the instance policy
+// and signs the administrator in. It needs the one-time code remnantd
+// printed to its log, and works only while there are no users.
 func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Code         string `json:"code"`
-		Mode         string `json:"mode"`
-		Username     string `json:"username"`
-		InstanceName string `json:"instance_name"`
+		Code         string       `json:"code"`
+		Username     string       `json:"username"`
+		Password     string       `json:"password"`
+		InstanceName string       `json:"instance_name"`
+		Policy       store.Policy `json:"policy"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if !validate(w, oneOf("mode", in.Mode, store.ModeTeam, store.ModePersonal), checkUsername(in.Username),
+	if !validate(w, checkUsername(in.Username), checkPassword(in.Username, in.Password),
 		required("code", in.Code, 40), maxLen("instance_name", in.InstanceName, 60)) {
 		return
 	}
-	u, token, err := s.store.Setup(r.Context(), store.SetupInput{Mode: in.Mode, Username: in.Username, Code: in.Code})
+	if !s.limiter.allow(clientIP(r)) {
+		tooManyAttempts(w)
+		return
+	}
+	hash, err := auth.HashPassword(in.Password)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	u, err := s.store.Setup(r.Context(), store.SetupInput{Policy: in.Policy, Username: in.Username, PasswordHash: hash, Code: in.Code})
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -60,60 +97,81 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	if in.InstanceName != "" {
 		_ = s.store.SetSetting(r.Context(), brandingKey, Branding{Name: in.InstanceName}, u.ID)
 	}
-	s.log.Info("first-run setup completed", "mode", in.Mode, "admin", u.Username)
-	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "token": token, "mode": in.Mode})
+	pol, _ := s.store.Policy(r.Context())
+	s.log.Info("first-run setup completed", "profile", pol.Profile, "admin", u.Username)
+	p, ok := s.startSession(w, r, in.Username, in.Password)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"user": p, "policy": pol})
 }
 
 func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
-	mode, err := s.store.DeploymentMode(r.Context())
+	pol, err := s.store.Policy(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"mode": mode})
+	writeJSON(w, http.StatusOK, map[string]any{"policy": pol, "presets": store.Presets})
 }
 
 func (s *Server) setInstance(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Mode string `json:"mode"`
-	}
-	if !decode(w, r, &in) || !validate(w, oneOf("mode", in.Mode, store.ModeTeam, store.ModePersonal)) {
-		return
-	}
-	if err := s.store.SetDeploymentMode(r.Context(), in.Mode, principal(r).UserID); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.log.Info("deployment mode changed", "mode", in.Mode, "by", principal(r).Username)
-	writeJSON(w, http.StatusOK, map[string]string{"mode": in.Mode})
-}
-
-func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Username string    `json:"username"`
-		Role     auth.Role `json:"role"`
+		Policy store.Policy `json:"policy"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	var roleErr error
+	pol, err := s.store.SetPolicy(r.Context(), in.Policy, principal(r).UserID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("instance policy changed", "profile", pol.Profile, "self_approval", pol.SelfApproval,
+		"self_review", pol.SelfReview, "admin_lab_approval", pol.AdminLabApproval, "by", principal(r).Username)
+	writeJSON(w, http.StatusOK, map[string]any{"policy": pol, "presets": store.Presets})
+}
+
+// createUser adds a user. Without a password one is generated and
+// returned once; the user must change it at the first sign-in.
+func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string    `json:"username"`
+		Role     auth.Role `json:"role"`
+		Password string    `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	var roleErr, pwErr error
 	if !in.Role.Valid() {
 		roleErr = badRequest("role must be admin, researcher or reviewer")
 	}
-	if !validate(w, checkUsername(in.Username), roleErr) {
+	if in.Password != "" {
+		pwErr = checkPassword(in.Username, in.Password)
+	}
+	if !validate(w, checkUsername(in.Username), roleErr, pwErr) {
 		return
 	}
-	u, err := s.store.CreateUser(r.Context(), in.Username, in.Role)
+	password, generated := in.Password, in.Password == ""
+	if generated {
+		password = auth.NewTemporaryPassword()
+	}
+	hash, err := auth.HashPassword(password)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	token, err := s.store.CreateToken(r.Context(), u.ID, "initial", 0)
+	u, err := s.store.CreateUserWithPassword(r.Context(), in.Username, in.Role, hash, generated)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "token": token})
+	out := map[string]any{"user": u}
+	if generated {
+		out["temporary_password"] = password
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +182,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Role     *auth.Role `json:"role"`
 		Disabled *bool      `json:"disabled"`
+		Approve  bool       `json:"approve"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -132,15 +191,57 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "role must be admin, researcher or reviewer")
 		return
 	}
-	u, err := s.store.UpdateUser(r.Context(), id, store.UserPatch{Role: in.Role, Disabled: in.Disabled})
+	u, err := s.store.UpdateUser(r.Context(), id, store.UserPatch{Role: in.Role, Disabled: in.Disabled, Approve: in.Approve})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	if in.Approve {
+		s.log.Info("account request approved", "user", u.Username, "by", principal(r).Username)
+	}
 	writeJSON(w, http.StatusOK, u)
 }
 
-// issueToken gives a user a new bearer token, shown once.
+// deleteUser declines an account request. Accounts that were ever active
+// are disabled instead, so their history keeps a name.
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteAccountRequest(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusConflict, "conflict", "only pending account requests can be deleted; disable the account instead")
+			return
+		}
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resetPassword gives a user a new temporary password, shown once, and
+// signs out their sessions.
+func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	password := auth.NewTemporaryPassword()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.store.SetPassword(r.Context(), id, hash, true, 0); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("password reset", "user_id", id, "by", principal(r).Username)
+	writeJSON(w, http.StatusOK, map[string]string{"temporary_password": password})
+}
+
+// issueToken gives a user a new API token for scripts, shown once.
 func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -154,7 +255,7 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Name == "" {
-		in.Name = "web"
+		in.Name = "api"
 	}
 	if in.TTLHours < 0 || in.TTLHours > 24*366 {
 		writeError(w, http.StatusBadRequest, "bad_request", "ttl_hours must be 0 (no expiry) to "+strconv.Itoa(24*366))

@@ -6,6 +6,7 @@ import { Icon, type IconName } from "./ui/Icon";
 import { Button, ToastProvider } from "./ui/components";
 import { SignIn } from "./pages/SignIn";
 import { Setup } from "./pages/Setup";
+import { ForcedPasswordChange } from "./pages/Password";
 import { Dashboard } from "./pages/Dashboard";
 import { RunsPage } from "./pages/Runs";
 import { NewRunPage } from "./pages/NewRun";
@@ -23,7 +24,7 @@ import type { Role, Summary } from "./api/types";
 
 export function App() {
   return (
-    <SessionProvider signIn={(p) => <SignIn {...p} />} setup={(p) => <Setup lang={p.lang} setLang={p.setLang} onDone={p.onToken} />}>
+    <SessionProvider signIn={(p) => <SignIn {...p} />} setup={(p) => <Setup {...p} />} changePassword={<ForcedPasswordChange />}>
       <ToastProvider>
         <Shell />
       </ToastProvider>
@@ -61,7 +62,7 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
 ];
 
 function Shell() {
-  const { me, branding, summary, version, prefs, can, signOut, mode } = useSession();
+  const { me, branding, summary, version, prefs, can, signOut, policy } = useSession();
   const { t } = useI18n();
   const { path } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
@@ -127,7 +128,7 @@ function Shell() {
             </span>
             <span style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: "block", color: "var(--ink)" }}>{me.username}</strong>
-              {mode === "personal" ? t("mode.personal") : t(`role.${me.role}` as Key)}
+              {policy.profile === "personal" ? t("profile.personal") : t(`role.${me.role}` as Key)}
             </span>
             <Button variant="ghost" size="sm" iconOnly icon="logout" aria-label={t("nav.signOut")} title={t("nav.signOut")} onClick={signOut} />
           </div>

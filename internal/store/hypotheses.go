@@ -192,7 +192,7 @@ func checkApprovalScope(ctx context.Context, tx pgx.Tx, a Approval) (labContext,
 var ErrStale = fmt.Errorf("%w: approval is stale", ErrConflict)
 
 // DecideApproval records an approve/deny decision. The decider must differ
-// from the requester unless allowSelf (personal mode), in which case the
+// from the requester unless allowSelf (the instance policy allows self-approval), in which case the
 // approval is marked self_approved. The scope hash is recomputed from
 // current state.
 func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, approve bool, note string, allowSelf bool) (Approval, error) {
@@ -244,7 +244,7 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID, decider int64, a
 		}
 		msg := fmt.Sprintf("Lab approval %d %s", a.ID, decision)
 		if self {
-			msg += " by its requester (personal mode)"
+			msg += " by its requester (self-approval allowed by the instance policy)"
 		}
 		return appendEvent(ctx, tx, c.runID, "approval.decided", "", msg,
 			map[string]any{"approval_id": a.ID, "decision": decision, "self_approved": self})
