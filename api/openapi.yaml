@@ -78,6 +78,108 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
 
+  /llm-profiles/test:
+    post:
+      summary: Check unsaved profile settings (admin) — key, endpoint and model — without spending tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, api_key]
+              properties:
+                provider: { type: string, enum: [anthropic], default: anthropic }
+                base_url: { type: string }
+                model: { type: string }
+                api_key: { type: string, writeOnly: true }
+                options: { $ref: '#/components/schemas/ModelOptions' }
+      responses:
+        '200': { description: Result (ok false carries the reason), content: { application/json: { schema: { $ref: '#/components/schemas/ProfileCheck' } } } }
+  /llm-profiles/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    patch:
+      summary: Edit a model profile (admin); a non-empty api_key replaces the stored key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                base_url: { type: string, maxLength: 2048 }
+                model: { type: string, maxLength: 200 }
+                effort: { type: string, enum: [low, medium, high, xhigh, max] }
+                api_key: { type: string, writeOnly: true, description: Replaces the key; the old one cannot be recovered }
+                options: { $ref: '#/components/schemas/ModelOptions' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/LLMProfile' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete a model profile (admin) that no project, agent or unfinished run uses
+      responses:
+        '204': { description: Deleted }
+        '409': { description: In use, $ref: '#/components/responses/Error' }
+  /llm-profiles/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Check a stored profile's key, endpoint and model (admin) without spending tokens
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileCheck' } } } }
+  /agents:
+    get:
+      summary: The pipeline's agents and their settings
+      responses:
+        '200': { description: Agents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Agent' } } } } }
+  /agents/{role}:
+    parameters: [{ name: role, in: path, required: true, schema: { type: string, enum: [hypothesis_researcher, skeptic] } }]
+    patch:
+      summary: Change an agent (admin)
+      description: llm_profile_id 0 returns the agent to the run's profile. Instructions are added after the agent's rules and cannot override them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                llm_profile_id: { type: integer, format: int64 }
+                config: { $ref: '#/components/schemas/AgentConfig' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /settings/research:
+    get:
+      summary: Research settings, their defaults, and the server's configured static analyzers
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings: { $ref: '#/components/schemas/ResearchSettings' }
+                  defaults: { $ref: '#/components/schemas/ResearchSettings' }
+                  static_operations: { type: array, items: { type: string } }
+    put:
+      summary: Change the research settings (admin); they apply to runs and requests started afterwards
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ResearchSettings' } } }
+      responses:
+        '200': { description: Saved }
+        '400': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /system/config:
+    get:
+      summary: The server's environment configuration (admin, read-only, no secrets)
+      responses:
+        '200': { description: Configuration, content: { application/json: { schema: { type: object } } } }
+
   /projects:
     get:
       summary: List projects with target and active-run counts
@@ -689,6 +791,8 @@ components:
         effort: { type: string, enum: [low, medium, high, xhigh, max] }
         has_api_key: { type: boolean }
         api_key_hint: { type: string, description: 'Last four characters, e.g. "…a1B2"' }
+        options: { $ref: '#/components/schemas/ModelOptions' }
+        used_by: { type: integer, description: Projects and agents that use the profile }
         updated_at: { type: string, format: date-time }
     CreateLLMProfile:
       type: object
@@ -701,6 +805,7 @@ components:
         model: { type: string, examples: [claude-opus-5-5] }
         effort: { type: string, enum: [low, medium, high, xhigh, max], default: high }
         api_key: { type: string, writeOnly: true }
+        options: { $ref: '#/components/schemas/ModelOptions' }
     Policy:
       type: object
       required: [source_mode, dynamic_mode, network]
@@ -1030,3 +1135,39 @@ components:
         disabled: { type: boolean }
         pending: { type: boolean }
         has_password: { type: boolean }
+    ModelOptions:
+      type: object
+      properties:
+        thinking: { type: string, enum: ['', adaptive, disabled], description: Empty keeps the model default }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 900, description: Per request attempt; 0 is the SDK default (else 10–900) }
+        max_retries: { type: [integer, 'null'], minimum: 0, maximum: 10, description: null is the SDK default }
+    ProfileCheck:
+      type: object
+      properties:
+        ok: { type: boolean }
+        model: { type: string, description: The model's display name }
+        error: { type: string }
+    AgentConfig:
+      type: object
+      properties:
+        instructions: { type: string, maxLength: 4000 }
+        max_call_tokens: { type: integer, description: 0 keeps the instance setting, else 2048–32000 }
+    Agent:
+      type: object
+      properties:
+        role: { type: string, enum: [hypothesis_researcher, skeptic] }
+        display_name: { type: string }
+        enabled: { type: boolean }
+        llm_profile_id: { type: [integer, 'null'] }
+        config: { $ref: '#/components/schemas/AgentConfig' }
+        updated_at: { type: string, format: date-time }
+    ResearchSettings:
+      type: object
+      properties:
+        run_defaults: { $ref: '#/components/schemas/Limits' }
+        candidates_per_pattern: { type: integer, minimum: 1, maximum: 10 }
+        max_candidates: { type: integer, minimum: 1, maximum: 100 }
+        max_call_tokens: { type: integer, minimum: 2048, maximum: 32000 }
+        lab_defaults: { $ref: '#/components/schemas/LabLimits' }
+        approval_ttl_hours: { type: integer, minimum: 1, maximum: 168 }
+        disabled_static_operations: { type: array, items: { type: string } }

@@ -176,7 +176,9 @@ type fakeModel struct {
 	mu      sync.Mutex
 	calls   map[string]int
 	inputs  []string
-	block   chan struct{} // if set, call number blockAt (default 1) is closed on and waits until ctx is done
+	systems map[string]string // last system prompt per agent
+	maxTok  map[string]int64  // last max_tokens per agent
+	block   chan struct{}     // if set, call number blockAt (default 1) is closed on and waits until ctx is done
 	blockAt int
 	failAll bool
 	output  int64 // reported output tokens per call; default 300
@@ -195,6 +197,10 @@ func (f *fakeModel) CompleteJSON(ctx context.Context, req llm.Request) (llm.Resp
 	}
 	f.calls[req.AgentKey]++
 	f.inputs = append(f.inputs, req.Input)
+	if f.systems == nil {
+		f.systems, f.maxTok = map[string]string{}, map[string]int64{}
+	}
+	f.systems[req.AgentKey], f.maxTok[req.AgentKey] = req.System, req.MaxTokens
 	var block chan struct{}
 	if f.block != nil && len(f.inputs) == max(f.blockAt, 1) {
 		block, f.block = f.block, nil
@@ -1025,4 +1031,105 @@ func TestFirstRunSetup(t *testing.T) {
 	if _, err := e.st.UpdateUser(e.ctx, boss.ID, store.UserPatch{Disabled: &off}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("disabling the last admin: %v", err)
 	}
+}
+
+// Agent settings and research settings change what the pipeline does.
+func TestAgentAndResearchSettings(t *testing.T) {
+	e := setup(t)
+	agents, err := e.st.ListAgents(e.ctx)
+	must(t, err)
+	if len(agents) != 2 || agents[0].Role != "hypothesis_researcher" || agents[1].Role != "skeptic" {
+		t.Fatalf("agents = %+v", agents)
+	}
+	_, err = e.st.UpdateAgent(e.ctx, "hypothesis_researcher", store.AgentPatch{Config: &store.AgentConfig{Instructions: "Prefer integer overflow leads.", MaxCallTokens: 3000}})
+	must(t, err)
+	off := false
+	_, err = e.st.UpdateAgent(e.ctx, "skeptic", store.AgentPatch{Enabled: &off})
+	must(t, err)
+
+	rs := store.DefaultResearchSettings()
+	rs.MaxCandidates = 1
+	rs.MaxCallTokens = 5000
+	_, err = e.st.SetResearchSettings(e.ctx, rs, e.alice)
+	must(t, err)
+	bad := rs
+	bad.MaxCallTokens = 100
+	if _, err := e.st.SetResearchSettings(e.ctx, bad, e.alice); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("max_call_tokens 100: %v", err)
+	}
+
+	m := &fakeModel{}
+	o := e.orchestrator(m, nil)
+	runID := e.newRun(200000)
+	e.runOnce(o)
+	if st, msg := e.status(runID); st != research.RunReviewRequired {
+		t.Fatalf("status %s: %s", st, msg)
+	}
+	if n := m.count("hypothesis_researcher"); n != 1 {
+		t.Errorf("researcher calls = %d, want 1 (max_candidates 1)", n)
+	}
+	if n := m.count("skeptic"); n != 0 {
+		t.Errorf("disabled skeptic was called %d times", n)
+	}
+	sys := m.systems["hypothesis_researcher"]
+	if !strings.Contains(sys, "Prefer integer overflow leads.") || strings.Index(sys, "Prefer integer") < strings.Index(sys, "Rules that override") {
+		t.Error("instructions missing or placed before the rules")
+	}
+	if m.maxTok["hypothesis_researcher"] != 3000 {
+		t.Errorf("researcher max_tokens = %d, want the agent's 3000", m.maxTok["hypothesis_researcher"])
+	}
+
+	// Clearing the agent's cap falls back to the instance's.
+	_, err = e.st.UpdateAgent(e.ctx, "hypothesis_researcher", store.AgentPatch{Config: &store.AgentConfig{}})
+	must(t, err)
+	e.newRun(200000)
+	e.runOnce(o)
+	if m.maxTok["hypothesis_researcher"] != 5000 {
+		t.Errorf("researcher max_tokens = %d, want the instance's 5000", m.maxTok["hypothesis_researcher"])
+	}
+}
+
+// Model profiles can be edited, re-keyed and deleted when unused.
+func TestLLMProfileLifecycle(t *testing.T) {
+	e := setup(t)
+	ps, err := e.st.ListLLMProfiles(e.ctx)
+	must(t, err)
+	used := ps[0]
+	if used.UsedBy != 1 {
+		t.Fatalf("used_by = %d, want 1 (the project)", used.UsedBy)
+	}
+	model, key, three := "claude-sonnet-5-5", "sk-new-key-123456", 3
+	p, err := e.st.UpdateLLMProfile(e.ctx, used.ID, store.LLMProfilePatch{Model: &model, APIKey: &key,
+		Options: &llm.Options{Thinking: "adaptive", TimeoutSeconds: 120, MaxRetries: &three}})
+	must(t, err)
+	if p.Model != model || p.APIKeyHint != "…3456" || p.Options.Thinking != "adaptive" || *p.Options.MaxRetries != 3 {
+		t.Fatalf("updated %+v", p)
+	}
+	creds, err := e.st.LLMCredentials(e.ctx, used.ID)
+	must(t, err)
+	if creds.APIKey != key || creds.Model != model || creds.Options.TimeoutSeconds != 120 {
+		t.Fatalf("credentials %+v", creds.Options)
+	}
+	name := "renamed"
+	p, err = e.st.UpdateLLMProfile(e.ctx, used.ID, store.LLMProfilePatch{Name: &name})
+	must(t, err)
+	if creds, _ := e.st.LLMCredentials(e.ctx, used.ID); creds.APIKey != key || p.Options.Thinking != "adaptive" {
+		t.Fatal("a rename changed the key or options")
+	}
+	if err := e.st.DeleteLLMProfile(e.ctx, used.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("deleting a profile in use: %v", err)
+	}
+	spare, err := e.st.CreateLLMProfile(e.ctx, store.LLMProfileInput{Name: "spare", Provider: "anthropic", Model: "m", Effort: "low", APIKey: "sk-spare-000000"})
+	must(t, err)
+	_, err = e.st.UpdateAgent(e.ctx, "skeptic", store.AgentPatch{LLMProfileID: &spare.ID})
+	must(t, err)
+	if err := e.st.DeleteLLMProfile(e.ctx, spare.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("deleting a profile an agent uses: %v", err)
+	}
+	a, err := e.st.UpdateAgent(e.ctx, "skeptic", store.AgentPatch{ClearProfile: true})
+	must(t, err)
+	if a.LLMProfileID != nil {
+		t.Fatal("profile not cleared")
+	}
+	must(t, e.st.DeleteLLMProfile(e.ctx, spare.ID))
 }

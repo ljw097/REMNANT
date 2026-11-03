@@ -61,6 +61,15 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 
 	api.HandleFunc("GET /api/v1/llm-profiles", s.listLLMProfiles)
 	api.HandleFunc("POST /api/v1/llm-profiles", s.requireRole(s.createLLMProfile, auth.RoleAdmin))
+	api.HandleFunc("POST /api/v1/llm-profiles/test", s.requireRole(s.testUnsavedProfile, auth.RoleAdmin))
+	api.HandleFunc("PATCH /api/v1/llm-profiles/{id}", s.requireRole(s.updateLLMProfile, auth.RoleAdmin))
+	api.HandleFunc("DELETE /api/v1/llm-profiles/{id}", s.requireRole(s.deleteLLMProfile, auth.RoleAdmin))
+	api.HandleFunc("POST /api/v1/llm-profiles/{id}/test", s.requireRole(s.testLLMProfile, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/agents", s.listAgents)
+	api.HandleFunc("PATCH /api/v1/agents/{role}", s.requireRole(s.updateAgent, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/settings/research", s.getResearchSettings)
+	api.HandleFunc("PUT /api/v1/settings/research", s.requireRole(s.setResearchSettings, auth.RoleAdmin))
+	api.HandleFunc("GET /api/v1/system/config", s.requireRole(s.systemConfig, auth.RoleAdmin))
 
 	api.HandleFunc("GET /api/v1/projects", s.listProjects)
 	api.HandleFunc("POST /api/v1/projects", s.requireRole(s.createProject, auth.RoleResearcher))

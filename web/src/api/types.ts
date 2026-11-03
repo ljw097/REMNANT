@@ -297,7 +297,73 @@ export interface LLMProfile {
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   has_api_key: boolean;
   api_key_hint: string;
+  options: ModelOptions;
+  /** Projects and agents that use the profile; it cannot be deleted while used. */
+  used_by: number;
   updated_at: string;
+}
+
+/** Per-profile request settings; zero values keep the model or SDK default. */
+export interface ModelOptions {
+  thinking: "" | "adaptive" | "disabled";
+  timeout_seconds: number;
+  max_retries: number | null;
+}
+
+export interface ProfileCheck {
+  ok: boolean;
+  model?: string;
+  error?: string;
+}
+
+export type AgentRole = "hypothesis_researcher" | "skeptic";
+
+export interface Agent {
+  role: AgentRole;
+  display_name: string;
+  enabled: boolean;
+  llm_profile_id: number | null;
+  config: { instructions: string; max_call_tokens: number };
+  updated_at: string;
+}
+
+export interface LabLimits {
+  wall_seconds: number;
+  memory_mb: number;
+  cpu_cores: number;
+  max_processes: number;
+}
+
+export interface ResearchSettings {
+  run_defaults: { max_workers: number; wall_seconds: number; max_tokens: number };
+  candidates_per_pattern: number;
+  max_candidates: number;
+  max_call_tokens: number;
+  lab_defaults: LabLimits;
+  approval_ttl_hours: number;
+  disabled_static_operations: string[];
+}
+
+export interface ResearchSettingsResponse {
+  settings: ResearchSettings;
+  defaults: ResearchSettings;
+  static_operations: string[];
+}
+
+export interface SystemConfig {
+  listen: string;
+  data_dir: string;
+  master_key_source: "environment" | "file";
+  orchestrator: boolean;
+  orchestrator_concurrency: number;
+  worker: "off" | "bwrap";
+  worker_rules: boolean;
+  static_operations: string[];
+  lab_operations: string[];
+  repo_hosts: string[] | null;
+  auto_update: "off" | "check" | "install";
+  update_interval: string;
+  update_repo: string;
 }
 
 export interface Summary {

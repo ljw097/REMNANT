@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"github.com/ljw097/remnant/internal/llm"
 	"time"
 )
 
@@ -20,15 +21,38 @@ const userCols = `id, username, role, disabled, pending, must_change_password, c
 // LLMProfile is the API view of a provider profile; it never carries key
 // material.
 type LLMProfile struct {
-	ID         int64     `db:"id" json:"id"`
-	Name       string    `db:"name" json:"name"`
-	Provider   string    `db:"provider" json:"provider"`
-	BaseURL    string    `db:"base_url" json:"base_url"`
-	Model      string    `db:"model" json:"model"`
-	Effort     string    `db:"effort" json:"effort"`
-	HasAPIKey  bool      `db:"has_api_key" json:"has_api_key"`
-	APIKeyHint string    `db:"api_key_hint" json:"api_key_hint"`
-	UpdatedAt  time.Time `db:"updated_at" json:"updated_at"`
+	ID         int64       `db:"id" json:"id"`
+	Name       string      `db:"name" json:"name"`
+	Provider   string      `db:"provider" json:"provider"`
+	BaseURL    string      `db:"base_url" json:"base_url"`
+	Model      string      `db:"model" json:"model"`
+	Effort     string      `db:"effort" json:"effort"`
+	HasAPIKey  bool        `db:"has_api_key" json:"has_api_key"`
+	APIKeyHint string      `db:"api_key_hint" json:"api_key_hint"`
+	Options    llm.Options `db:"options" json:"options"`
+	// UsedBy counts the projects and agents that use the profile.
+	UsedBy    int       `db:"used_by" json:"used_by"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+}
+
+// Agent is one pipeline agent's configuration.
+type Agent struct {
+	Role         string      `db:"role" json:"role"`
+	DisplayName  string      `db:"display_name" json:"display_name"`
+	Enabled      bool        `db:"enabled" json:"enabled"`
+	LLMProfileID *int64      `db:"llm_profile_id" json:"llm_profile_id"`
+	Config       AgentConfig `db:"config" json:"config"`
+	UpdatedAt    time.Time   `db:"updated_at" json:"updated_at"`
+}
+
+// AgentConfig holds an agent's adjustable settings.
+type AgentConfig struct {
+	// Instructions are added to the agent's system prompt after REMNANT's
+	// own rules, which they cannot override.
+	Instructions string `json:"instructions"`
+	// MaxCallTokens overrides the instance's per-call cap for this agent
+	// (0 keeps it).
+	MaxCallTokens int `json:"max_call_tokens"`
 }
 
 type Project struct {

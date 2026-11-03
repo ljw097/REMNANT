@@ -63,7 +63,7 @@ Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming bo
 | `/findings` | Validated findings and those awaiting lab results. |
 | `/projects`, `/projects/{id}` | Projects, policy, and targets (local snapshots or pinned Git repositories). |
 | `/patterns`, `/patterns/{id}` | Root-cause pattern library with review state and custody. |
-| `/settings/*` | Preferences, dashboard, account; for administrators: operating mode, users (roles, disable, new tokens shown once), model profiles (API key entered once, never shown), branding, system and updates. |
+| `/settings/*` | Preferences, dashboard, account (password). For administrators: operating mode (instance policy); users; **model profiles** (register an API key, test the connection without spending tokens, edit, replace the key, set thinking/timeout/retries, delete when unused); **agents** (turn the Hypothesis Researcher or Skeptic on or off, give each its own model profile, a per-call token cap and additional instructions); **expert settings** (run defaults, candidates per pattern and per run, tokens per model call, lab defaults, approval lifetime, which static analyzers run); branding; system and updates with the read-only server configuration. |
 
 Desktop and laptop get the sidebar; on phones the sidebar becomes a menu, tables scroll inside their panel, and approvals and run status are fully usable.
 

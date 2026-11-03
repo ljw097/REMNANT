@@ -297,6 +297,36 @@ check "personal self review" 200 "$(req $ADMIN POST /patterns/$OWN/review '{"sta
 check "self review recorded" t "$($PSQL -c "select self_reviewed from remnant.patterns where id=$OWN")"
 check "back to team" 200 "$(req $ADMIN PUT /instance '{"policy":{"profile":"team","session_hours":168}}')"
 
+# Model profiles, agents and expert settings.
+check "profile test" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
+check "profile test by researcher" 403 "$(req $RES POST /llm-profiles/$LLM/test)"
+check "unsaved bad key" False "$(req $ADMIN POST /llm-profiles/test '{"model":"claude-opus-5-5","api_key":"wrong-key","base_url":"http://127.0.0.1:58081"}' >/dev/null; j "['ok']")"
+check "unsaved unknown model" 'model "gpt-x" was not found (404)' "$(req $ADMIN POST /llm-profiles/test '{"model":"gpt-x","api_key":"sk-ant-test-0123456789","base_url":"http://127.0.0.1:58081"}' >/dev/null; j "['error']")"
+check "profile options" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"options":{"thinking":"adaptive","timeout_seconds":120,"max_retries":1}}')"
+check "profile options saved" adaptive/120 "$(j "['options']['thinking']")/$(j "['options']['timeout_seconds']")"
+check "profile bad options" 400 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"options":{"thinking":"always"}}')"
+check "profile key rotation" 200 "$(req $ADMIN PATCH /llm-profiles/$LLM '{"api_key":"sk-ant-rotated-99999999"}')"; check "rotated hint" "…9999" "$(j "['api_key_hint']")"
+check "rotated key works" True "$(req $ADMIN POST /llm-profiles/$LLM/test >/dev/null; j "['ok']")"
+check "delete profile in use" 409 "$(req $ADMIN DELETE /llm-profiles/$LLM)"
+check "agents" 200 "$(req $RES GET /agents)"; check "two agents" 2 "$(j ".__len__()")"
+check "agent by researcher" 403 "$(req $RES PATCH /agents/skeptic '{"enabled":false}')"
+check "agent instructions" 200 "$(req $ADMIN PATCH /agents/hypothesis_researcher '{"config":{"instructions":"Prefer length arithmetic.","max_call_tokens":4096}}')"
+check "agent bad cap" 400 "$(req $ADMIN PATCH /agents/skeptic '{"config":{"max_call_tokens":10}}')"
+check "unknown agent" 404 "$(req $ADMIN PATCH /agents/reporter '{"enabled":false}')"
+check "research settings" 200 "$(req $RES GET /settings/research)"; check "default ttl" 24 "$(j "['settings']['approval_ttl_hours']")"
+SET=$(python3 -c "import json; d=json.load(open('$SP/body'))['settings']; print(json.dumps(d))")
+mut() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); exec(sys.argv[2]); print(json.dumps(d))' "$SET" "$1"; }
+SET=$(mut "d['approval_ttl_hours']=48; d['run_defaults']['max_tokens']=300000")
+check "research settings by researcher" 403 "$(req $RES PUT /settings/research "$SET")"
+check "research settings save" 200 "$(req $ADMIN PUT /settings/research "$SET")"
+check "bad research settings" 422 "$(req $ADMIN PUT /settings/research "$(mut "d['max_candidates']=0")")"
+check "unknown analyzer" 400 "$(req $ADMIN PUT /settings/research "$(mut "d['disabled_static_operations']=['static.magic']")")"
+check "run uses new defaults" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"; check "default tokens applied" 300000 "$(j "['limits']['max_tokens']")"
+RUN5=$(j "['id']"); req $RES POST /runs/$RUN5/cancel >/dev/null
+check "system config" 200 "$(req $ADMIN GET /system/config)"; check "key source" environment "$(j "['master_key_source']")"
+check "no secrets in config" 0 "$(grep -c "$REMNANT_MASTER_KEY" $SP/body)"
+check "system config by researcher" 403 "$(req $RES GET /system/config)"
+
 check "server logged no errors" 0 "$(grep -c '"level":"ERROR"' $SP/serve.log)"
 
 # Crash recovery: kill remnantd while a run is in hypothesis_generation,

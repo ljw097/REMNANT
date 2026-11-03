@@ -371,15 +371,46 @@ func (s *Store) WorkScope(ctx context.Context, runID int64) (WorkScope, error) {
 }
 
 // AgentProfile returns the configuration for an agent role. Without a row
-// the role is enabled and uses the run's model profile.
-func (s *Store) AgentProfile(ctx context.Context, role string) (enabled bool, llmProfileID *int64, err error) {
+// the role is enabled, uses the run's model profile and has no extra
+// settings.
+func (s *Store) AgentProfile(ctx context.Context, role string) (enabled bool, llmProfileID *int64, cfg AgentConfig, err error) {
 	err = s.pool.QueryRow(ctx, `
-		SELECT enabled, llm_profile_id FROM agent_profiles WHERE role = $1 ORDER BY id LIMIT 1`, role).
-		Scan(&enabled, &llmProfileID)
+		SELECT enabled, llm_profile_id, config FROM agent_profiles WHERE role = $1 ORDER BY id LIMIT 1`, role).
+		Scan(&enabled, &llmProfileID, &cfg)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return true, nil, nil
+		return true, nil, AgentConfig{}, nil
 	}
-	return enabled, llmProfileID, err
+	return enabled, llmProfileID, cfg, err
+}
+
+const agentCols = `role, display_name, enabled, llm_profile_id, config, updated_at`
+
+// ListAgents returns the agents the pipeline runs.
+func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
+	return collect[Agent](s.pool.Query(ctx, `
+		SELECT `+agentCols+` FROM agent_profiles
+		WHERE role IN ('hypothesis_researcher', 'skeptic') ORDER BY role = 'skeptic', id`))
+}
+
+// AgentPatch changes an agent. ClearProfile makes it use the run's model
+// profile again.
+type AgentPatch struct {
+	Enabled      *bool
+	LLMProfileID *int64
+	ClearProfile bool
+	Config       *AgentConfig
+}
+
+func (s *Store) UpdateAgent(ctx context.Context, role string, p AgentPatch) (Agent, error) {
+	a, err := one[Agent](s.pool.Query(ctx, `
+		UPDATE agent_profiles SET
+			enabled        = COALESCE($2, enabled),
+			llm_profile_id = CASE WHEN $4 THEN NULL ELSE COALESCE($3, llm_profile_id) END,
+			config         = COALESCE($5, config),
+			updated_at     = now()
+		WHERE role = $1
+		RETURNING `+agentCols, role, p.Enabled, p.LLMProfileID, p.ClearProfile, p.Config))
+	return a, mapErr(err)
 }
 
 type EvidenceInput struct {

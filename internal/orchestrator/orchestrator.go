@@ -213,10 +213,12 @@ type job struct {
 	runID  int64
 	status research.RunStatus
 	log    *slog.Logger
+	// settings are the instance's research settings when the job started.
+	settings store.ResearchSettings
 }
 
 func (o *Orchestrator) work(parent context.Context, runID int64, status research.RunStatus) {
-	j := &job{o: o, runID: runID, status: status, log: o.log.With("run", runID)}
+	j := &job{o: o, runID: runID, status: status, log: o.log.With("run", runID), settings: store.DefaultResearchSettings()}
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	stop := j.heartbeat(ctx, cancel)
@@ -237,7 +239,12 @@ func (o *Orchestrator) work(parent context.Context, runID int64, status research
 	} else if n > 0 {
 		j.log.Warn("cancelled interrupted experiments", "count", n)
 	}
-	var err error
+	settings, err := o.store.ResearchSettings(ctx)
+	if err != nil {
+		j.finish(ctx, err)
+		return
+	}
+	j.settings = settings
 	switch status {
 	case research.RunQueued:
 		err = j.research(ctx)

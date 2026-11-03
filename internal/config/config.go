@@ -26,8 +26,10 @@ type Config struct {
 	// <data dir>/master.key), which is created with mode 0600 on first use
 	// so a researcher's local instance needs no key management.
 	MasterKey []byte
-	DataDir   string   // REMNANT_DATA_DIR, default ./data
-	RepoHosts []string // REMNANT_REPO_HOSTS, comma separated; empty disables remote repositories
+	// MasterKeyFromEnv records whether MasterKey came from REMNANT_MASTER_KEY.
+	MasterKeyFromEnv bool
+	DataDir          string   // REMNANT_DATA_DIR, default ./data
+	RepoHosts        []string // REMNANT_REPO_HOSTS, comma separated; empty disables remote repositories
 
 	Orchestrator            bool // REMNANT_ORCHESTRATOR, "off" disables the in-process orchestrator
 	OrchestratorConcurrency int  // REMNANT_ORCHESTRATOR_CONCURRENCY, runs worked on at once, default 2
@@ -74,6 +76,7 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	rawKey := getenv("REMNANT_MASTER_KEY")
+	cfg.MasterKeyFromEnv = rawKey != ""
 	if rawKey == "" {
 		file := getenv("REMNANT_MASTER_KEY_FILE")
 		if file == "" {

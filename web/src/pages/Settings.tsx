@@ -5,15 +5,16 @@ import { useApi } from "../hooks";
 import { useI18n, type Key, type Lang } from "../i18n";
 import { Link } from "../router";
 import { appName, useSession } from "../session";
-import type { Branding, LLMProfile, InstancePolicy, Role, UserRef } from "../api/types";
+import type { Branding, InstancePolicy, Role, UserRef } from "../api/types";
 import { PolicyEditor } from "../ui/policy";
 import { NewPasswordFields, PasswordForm, passwordProblem } from "./Password";
 import { columnChoices, contrastOnWhite, startPages, type ColumnSet, type Prefs } from "../prefs";
-import { Alert, Button, ConfirmButton, Drawer, Empty, errorText, Field, PageHead, Panel, Segmented, SkeletonRows, Time, useToast } from "../ui/components";
+import { Alert, Button, ConfirmButton, Drawer, errorText, Field, PageHead, Panel, Segmented, SkeletonRows, Time, useToast } from "../ui/components";
 import { DashboardEditor } from "./Dashboard";
+import { AgentsSection, ModelsSection, ResearchSection, ServerConfigPanel } from "./SettingsExpert";
 import { Icon, type IconName } from "../ui/Icon";
 
-type Section = "preferences" | "dashboard" | "account" | "mode" | "users" | "models" | "branding" | "system";
+type Section = "preferences" | "dashboard" | "account" | "mode" | "users" | "models" | "agents" | "research" | "branding" | "system";
 
 const sections: { id: Section; icon: IconName; admin?: boolean }[] = [
   { id: "preferences", icon: "sliders" },
@@ -21,7 +22,9 @@ const sections: { id: Section; icon: IconName; admin?: boolean }[] = [
   { id: "account", icon: "user" },
   { id: "mode", icon: "shield", admin: true },
   { id: "users", icon: "users", admin: true },
-  { id: "models", icon: "cpu", admin: true },
+  { id: "models", icon: "key", admin: true },
+  { id: "agents", icon: "cpu", admin: true },
+  { id: "research", icon: "sliders", admin: true },
   { id: "branding", icon: "palette", admin: true },
   { id: "system", icon: "update" },
 ];
@@ -57,9 +60,12 @@ export function SettingsPage({ section }: { section: string }) {
           {current === "account" ? <AccountSection /> : null}
           {current === "mode" ? <ModeSection /> : null}
           {current === "users" ? <UsersSection /> : null}
+          {current === "agents" ? <AgentsSection /> : null}
+          {current === "research" ? <ResearchSection /> : null}
           {current === "models" ? <ModelsSection /> : null}
           {current === "branding" ? <BrandingSection /> : null}
           {current === "system" ? <SystemSection /> : null}
+          {current === "system" && can("admin") ? <ServerConfigPanel /> : null}
         </div>
       </div>
     </Frame>
@@ -187,131 +193,6 @@ function AccountSection() {
         <PasswordForm onDone={() => toast(t("password.changed"))} />
       </div>
     </Panel>
-  );
-}
-
-function ModelsSection() {
-  const { t } = useI18n();
-  const q = useApi<LLMProfile[]>("/llm-profiles");
-  const [open, setOpen] = useState(false);
-  return (
-    <Panel
-      title={t("settings.models")}
-      meta={t("models.sub")}
-      tools={
-        <Button size="sm" icon="plus" onClick={() => setOpen(true)}>
-          {t("models.new")}
-        </Button>
-      }
-    >
-      {q.loading && !q.data ? (
-        <SkeletonRows rows={2} cols={4} />
-      ) : (q.data ?? []).length === 0 ? (
-        <Empty title={t("models.emptyTitle")} body={t("models.emptyBody")} action={<Button onClick={() => setOpen(true)}>{t("models.new")}</Button>} />
-      ) : (
-        <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("models.name")}</th>
-              <th>{t("models.model")}</th>
-              <th>{t("models.effort")}</th>
-              <th>{t("models.key")}</th>
-              <th>{t("projects.col.updated")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(q.data ?? []).map((p) => (
-              <tr key={p.id}>
-                <td className="title-cell">
-                  {p.name}
-                  {p.base_url ? <span className="sub mono">{p.base_url}</span> : null}
-                </td>
-                <td className="mono small">{p.model}</td>
-                <td className="small">{p.effort}</td>
-                <td className="small">{p.has_api_key ? <span className="mono">{p.api_key_hint}</span> : <span style={{ color: "var(--bad)" }}>{t("models.noKey")}</span>}</td>
-                <td className="small ink-2">
-                  <Time iso={p.updated_at} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      )}
-      <ModelForm open={open} onClose={() => setOpen(false)} onSaved={q.reload} />
-    </Panel>
-  );
-}
-
-function ModelForm({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const { t } = useI18n();
-  const toast = useToast();
-  const [f, setF] = useState({ name: "", model: "claude-opus-5-5", effort: "high", base_url: "", api_key: "" });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(undefined);
-    try {
-      await post("/llm-profiles", { ...f, provider: "anthropic" });
-      toast(t("models.created"));
-      setF({ name: "", model: "claude-opus-5-5", effort: "high", base_url: "", api_key: "" });
-      onSaved();
-      onClose();
-    } catch (err) {
-      setError(errorText(err, t));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      title={t("models.new")}
-      foot={
-        <>
-          <Button onClick={onClose}>{t("common.cancel")}</Button>
-          <Button variant="primary" type="submit" form="model-form" loading={busy} disabled={!f.name.trim() || !f.model.trim() || !f.api_key}>
-            {t("models.create")}
-          </Button>
-        </>
-      }
-    >
-      <form id="model-form" className="form-grid" onSubmit={submit}>
-        <Alert icon="lock">{t("models.keyNote")}</Alert>
-        <Field label={t("models.name")}>{(id) => <input id={id} className="input" value={f.name} maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} />}</Field>
-        <div className="form-grid two">
-          <Field label={t("models.model")} hint={t("models.modelHint")}>
-            {(id) => <input id={id} className="input mono" value={f.model} maxLength={200} onChange={(e) => setF({ ...f, model: e.target.value })} />}
-          </Field>
-          <Field label={t("models.effort")} hint={t("models.effortHint")}>
-            {(id) => (
-              <select id={id} className="select" value={f.effort} onChange={(e) => setF({ ...f, effort: e.target.value })}>
-                {["low", "medium", "high", "xhigh", "max"].map((x) => (
-                  <option key={x} value={x}>
-                    {x}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-        </div>
-        <Field label={t("models.key")} hint={t("models.keyHint")}>
-          {(id) => <input id={id} className="input mono" type="password" autoComplete="off" value={f.api_key} onChange={(e) => setF({ ...f, api_key: e.target.value })} />}
-        </Field>
-        <Field label={t("models.baseUrl")} hint={t("models.baseUrlHint")}>
-          {(id) => <input id={id} className="input mono" type="url" value={f.base_url} placeholder="https://api.anthropic.com" onChange={(e) => setF({ ...f, base_url: e.target.value })} />}
-        </Field>
-        {error ? (
-          <Alert tone="bad" icon="alert">
-            {error}
-          </Alert>
-        ) : null}
-      </form>
-    </Drawer>
   );
 }
 

@@ -105,3 +105,82 @@ func TestUnsupportedProvider(t *testing.T) {
 		t.Fatal("unknown provider accepted")
 	}
 }
+
+func TestThinkingOption(t *testing.T) {
+	for mode, want := range map[string]string{"adaptive": "adaptive", "disabled": "disabled"} {
+		srv, got := fakeAPI(t, message("end_turn", `{}`))
+		c, err := NewClient(Profile{Provider: "anthropic", BaseURL: srv.URL, Model: "claude-opus-5-5", Effort: "high", APIKey: "sk-test",
+			Options: Options{Thinking: mode}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.CompleteJSON(context.Background(), Request{Schema: map[string]any{"type": "object"}, MaxTokens: 2048}); err != nil {
+			t.Fatal(err)
+		}
+		th, _ := (*got)["thinking"].(map[string]any)
+		if th["type"] != want {
+			t.Errorf("%s: thinking = %v", mode, (*got)["thinking"])
+		}
+	}
+}
+
+func TestRetriesOption(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`, 529)
+	}))
+	t.Cleanup(srv.Close)
+	zero := 0
+	c, _ := NewClient(Profile{Provider: "anthropic", BaseURL: srv.URL, Model: "m", Effort: "high", APIKey: "sk-test", Options: Options{MaxRetries: &zero}})
+	if _, err := c.CompleteJSON(context.Background(), Request{Schema: map[string]any{"type": "object"}, MaxTokens: 2048}); err == nil {
+		t.Fatal("expected an error")
+	}
+	if calls != 1 {
+		t.Fatalf("max_retries 0 made %d calls", calls)
+	}
+}
+
+func TestOptionsValidate(t *testing.T) {
+	neg, eleven, three := -1, 11, 3
+	for _, o := range []Options{{Thinking: "always"}, {TimeoutSeconds: 5}, {TimeoutSeconds: 901}, {MaxRetries: &neg}, {MaxRetries: &eleven}} {
+		if o.Validate() == nil {
+			t.Errorf("%+v accepted", o)
+		}
+	}
+	for _, o := range []Options{{}, {Thinking: "adaptive", TimeoutSeconds: 120, MaxRetries: &three}} {
+		if err := o.Validate(); err != nil {
+			t.Errorf("%+v: %v", o, err)
+		}
+	}
+}
+
+func TestCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("X-Api-Key") != "sk-test" && r.Header.Get("Authorization") != "Bearer sk-test":
+			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`, 401)
+		case r.Method == "GET" && r.URL.Path == "/v1/models/claude-opus-5-5":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type":"model","id":"claude-opus-5-5","display_name":"Claude Opus 5.5","created_at":"2026-01-01T00:00:00Z"}`))
+		default:
+			http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no"}}`, 404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	zero := 0
+	p := Profile{Provider: "anthropic", BaseURL: srv.URL, Model: "claude-opus-5-5", APIKey: "sk-test", Options: Options{MaxRetries: &zero}}
+	if name, err := Check(context.Background(), p); err != nil || name != "Claude Opus 5.5" {
+		t.Fatalf("check = %q, %v", name, err)
+	}
+	bad := p
+	bad.APIKey = "sk-wrong"
+	if _, err := Check(context.Background(), bad); err == nil || err.Error() != "the API key was rejected (401)" {
+		t.Fatalf("bad key: %v", err)
+	}
+	missing := p
+	missing.Model = "claude-nope"
+	if _, err := Check(context.Background(), missing); err == nil || err.Error() != `model "claude-nope" was not found (404)` {
+		t.Fatalf("missing model: %v", err)
+	}
+}

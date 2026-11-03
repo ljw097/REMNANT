@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -79,6 +80,15 @@ type LabLimits struct {
 
 func DefaultLabLimits() LabLimits {
 	return LabLimits{WallSeconds: 300, MemoryMB: 2048, CPUCores: 2, MaxProcesses: 32}
+}
+
+// Validate checks the ranges a lab sandbox accepts.
+func (l LabLimits) Validate() error {
+	if l.WallSeconds < 1 || l.WallSeconds > 3600 || l.MemoryMB < 64 || l.MemoryMB > 16384 ||
+		l.CPUCores < 1 || l.CPUCores > 8 || l.MaxProcesses < 1 || l.MaxProcesses > 256 {
+		return errors.New("limits out of range (wall 1–3600s, memory 64–16384MB, cpu 1–8, processes 1–256)")
+	}
+	return nil
 }
 
 // LabScope is what a human approves for one local-lab experiment. Any change

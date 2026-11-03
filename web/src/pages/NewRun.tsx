@@ -4,7 +4,7 @@ import { post } from "../api/client";
 import { useApi } from "../hooks";
 import { useI18n } from "../i18n";
 import { Link, navigate, useLocation } from "../router";
-import type { LLMProfile, Pattern, Project, RunDetail, Target } from "../api/types";
+import type { LLMProfile, Pattern, Project, ResearchSettingsResponse, RunDetail, Target } from "../api/types";
 import { Alert, Button, Empty, errorText, Field, PageHead, Panel, SkeletonRows, State } from "../ui/components";
 import { PolicyList, SectionTitle } from "../ui/domain";
 import { Hash } from "../ui/components";
@@ -25,6 +25,15 @@ export function NewRunPage() {
   const [workers, setWorkers] = useState(2);
   const [wall, setWall] = useState(900);
   const [tokens, setTokens] = useState(200000);
+  // Start from the instance's run defaults (Settings → Expert settings).
+  const research = useApi<ResearchSettingsResponse>("/settings/research");
+  useEffect(() => {
+    const d = research.data?.settings.run_defaults;
+    if (!d) return;
+    setWorkers(d.max_workers);
+    setWall(d.wall_seconds);
+    setTokens(d.max_tokens);
+  }, [research.data]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 

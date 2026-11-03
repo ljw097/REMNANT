@@ -61,6 +61,14 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the client went away, e.g. remnantd killed by the crash test
 
     def do_GET(self):
+        # GET /v1/models/{id}: the connection check of a model profile.
+        if self.path.startswith("/v1/models/"):
+            if not self.headers.get("Authorization", "").startswith("Bearer sk-ant-"):
+                return self.reply(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}})
+            model = self.path.rsplit("/", 1)[1]
+            if not model.startswith("claude-"):
+                return self.reply(404, {"type": "error", "error": {"type": "not_found_error", "message": "model not found"}})
+            return self.reply(200, {"type": "model", "id": model, "display_name": model + " (fake)", "created_at": "2026-01-01T00:00:00Z"})
         self.reply(200, calls)
 
     def do_POST(self):

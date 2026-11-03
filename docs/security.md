@@ -33,7 +33,8 @@ The web UI is served with a strict Content-Security-Policy (same-origin scripts,
 - The API returns only `has_api_key` and a four-character hint. No route returns key material; `store.LLMCredentials` is the only decrypting path and is used only to build a model client.
 - A model client is built from its stored profile only: `ANTHROPIC_*` variables in the server environment are ignored, so they cannot redirect a profile's key to another endpoint.
 - The master key is never stored in the database. Losing it makes stored keys unrecoverable; re-enter them.
-- Rotation: `key_version` exists for a future re-seal command. Until then, rotate by re-creating profiles.
+- Rotation: an administrator replaces a profile's key in Settings → Model profiles (`PATCH /llm-profiles/{id}` with `api_key`); the old sealed key is overwritten. "Test connection" (`POST /llm-profiles/{id}/test`, or `/llm-profiles/test` for unsaved settings) looks the model up at the provider with the key — it spends no tokens and returns only success or the HTTP reason, never key material. A profile cannot be deleted while a project, agent or unfinished run uses it.
+- Agent instructions set by administrators are appended to an agent's system prompt after REMNANT's rules, under a heading that says they cannot override them; the model's output is still schema-validated and evidence-checked as before.
 
 ## Source handling
 
