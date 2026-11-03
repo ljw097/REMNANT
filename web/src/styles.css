@@ -1,6 +1,6 @@
-/* Self-hosted Geist (OFL, Vercel) — served from 'self' to satisfy the CSP. */
-@font-face { font-family: "Geist"; src: url("/fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
-@font-face { font-family: "Geist Mono"; src: url("/fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+/* Self-hosted Pretendard (OFL) — one UI font for Korean and Latin, served
+   from 'self' to satisfy the CSP. */
+@font-face { font-family: "Pretendard Variable"; src: url("/fonts/PretendardVariable.woff2") format("woff2"); font-weight: 45 920; font-style: normal; font-display: swap; }
 
 /* REMNANT web UI.
    One world: cool neutral paper and ink, a cooler panel layer, one brandable
@@ -9,8 +9,8 @@
    revisions and code. */
 
 :root {
-  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Roboto, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", "JetBrains Mono", "Noto Sans Mono", Menlo, Consolas, monospace;
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "JetBrains Mono", "Noto Sans Mono", Menlo, Consolas, monospace;
 
   /* Brandable accent; --accent-base is set from organization branding. */
   --accent-base: #1f3fbf;
