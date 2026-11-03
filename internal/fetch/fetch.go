@@ -59,22 +59,39 @@ var ErrKeyInUse = errors.New("snapshot key already in use on disk")
 // without the .git directory, and returns the commit SHA and the tree
 // digest of the result.
 func (f *Fetcher) Fetch(ctx context.Context, sourceURI, ref, key string) (commit, digest string, err error) {
+	r, err := f.FetchHistory(ctx, sourceURI, ref, key, 0)
+	return r.Commit, r.Digest, err
+}
+
+// Result is a pinned checkout and, if asked for, the fix candidates from
+// its history.
+type Result struct {
+	Commit  string
+	Digest  string
+	History []Commit
+}
+
+// FetchHistory is Fetch that also reads the last historyDepth commits
+// (0: none) and returns the ones that look like security fixes.
+func (f *Fetcher) FetchHistory(ctx context.Context, sourceURI, ref, key string, historyDepth int) (res Result, err error) {
+	var commit, digest string
+	fail := func(e error) (Result, error) { return Result{}, e }
 	if err := source.ValidateSnapshotKey(key); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if err := ValidateRef(ref); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if ref == "" {
 		ref = "HEAD"
 	}
 	canonical, err := source.CanonicalRepoURL(sourceURI, f.AllowedHosts)
 	if err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	final := filepath.Join(f.SnapshotDir, key)
 	if _, err := os.Lstat(final); err == nil {
-		return "", "", ErrKeyInUse
+		return fail(ErrKeyInUse)
 	}
 
 	timeout := f.Timeout
@@ -87,15 +104,15 @@ func (f *Fetcher) Fetch(ctx context.Context, sourceURI, ref, key string) (commit
 	u, _ := url.Parse(canonical)
 	ip, err := f.publicAddr(ctx, u.Hostname())
 	if err != nil {
-		return "", "", err
+		return fail(err)
 	}
 
 	if err := os.MkdirAll(f.SnapshotDir, 0o750); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	tmp, err := os.MkdirTemp(f.SnapshotDir, ".fetch-")
 	if err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	defer os.RemoveAll(tmp)
 	work := filepath.Join(tmp, "tree")
@@ -127,33 +144,43 @@ func (f *Fetcher) Fetch(ctx context.Context, sourceURI, ref, key string) (commit
 		return strings.TrimSpace(stdout.String()), nil
 	}
 	if _, err := git("init", "-q", work); err != nil {
-		return "", "", err
+		return fail(err)
 	}
-	if _, err := git("-C", work, "fetch", "-q", "--depth", "1", "--no-tags", "--", canonical, ref); err != nil {
-		return "", "", err
+	depth := 1
+	if historyDepth > 1 {
+		depth = historyDepth
+	}
+	if _, err := git("-C", work, "fetch", "-q", "--depth", fmt.Sprint(depth), "--no-tags", "--", canonical, ref); err != nil {
+		return fail(err)
 	}
 	if _, err := git("-C", work, "checkout", "-q", "--detach", "FETCH_HEAD"); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if commit, err = git("-C", work, "rev-parse", "FETCH_HEAD^{commit}"); err != nil {
-		return "", "", err
+		return fail(err)
+	}
+	var history []Commit
+	if historyDepth > 0 {
+		if history, err = readHistory(ctx, git, work, historyDepth); err != nil {
+			return fail(fmt.Errorf("reading history: %w", err))
+		}
 	}
 	if err := os.RemoveAll(filepath.Join(work, ".git")); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if err := f.checkSize(work); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if digest, err = source.TreeDigest(work); err != nil {
-		return "", "", err
+		return fail(err)
 	}
 	if err := os.Rename(work, final); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return "", "", ErrKeyInUse
+			return fail(ErrKeyInUse)
 		}
-		return "", "", err
+		return fail(err)
 	}
-	return commit, digest, nil
+	return Result{Commit: commit, Digest: digest, History: history}, nil
 }
 
 // publicAddr resolves host and refuses it if any address is not public, so

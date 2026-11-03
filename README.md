@@ -63,6 +63,8 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"kind":"local_snapshot","display_nam
   localhost:8080/api/v1/projects/1/targets
 ```
 
+To start from a repository instead, allow its host (`REMNANT_REPO_HOSTS=github.com`) and paste the URL on the **Analyze a repository** page (or `POST /intakes`): REMNANT fetches it with its history, drafts root-cause patterns from past security fixes, and starts a run that hunts for the same mistakes in the current code.
+
 Then add patterns with `code_signatures` (`POST /patterns`) and queue a run (`POST /runs`, see `examples/create_run.json`). The orchestrator inside `remnantd serve` picks it up and drives it to `review_required`; follow it with `GET /runs/{id}/events`. Runs can be paused and resumed (`POST /runs/{id}/pause`, `/resume`); after a shutdown or crash they continue where they stopped. After triage, `POST /runs/{id}/finalize` produces the report. See `api/openapi.yaml` for the rest.
 
 ## Configuration

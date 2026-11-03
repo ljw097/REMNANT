@@ -640,3 +640,17 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .kv dt { color: var(--ink-2); font-size: var(--fs-1); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 640px) { .kv > div { grid-template-columns: 1fr; gap: 2px; } }
+.flow-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.flow-steps li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+.flow-steps li > span:last-child { display: grid; gap: 2px; }
+.flow-no { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--rule-strong); font-size: var(--fs-0); font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.input-lg { min-height: 44px; font-size: var(--fs-3, 16px); }
+.chip { display: inline-flex; align-items: center; padding: 0 6px; height: 18px; border-radius: 4px; border: 1px solid var(--rule); font-size: var(--fs-0); color: var(--ink-2); }
+.intake-steps { list-style: none; margin: 0; padding: 4px var(--pad) 12px; display: grid; }
+.intake-steps li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 10px 0; position: relative; }
+.intake-steps li + li::before { content: ""; position: absolute; left: 11px; top: -10px; height: 20px; border-left: 2px solid var(--rule); }
+.intake-steps .seal { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--rule-strong); color: var(--ink-3); background: var(--surface); }
+.intake-steps li[data-state="done"] .seal { border-color: var(--ok); color: var(--ok); }
+.intake-steps li[data-state="active"] .seal { border-color: var(--info); color: var(--info); border-style: dashed; }
+.intake-steps li[data-state="failed"] .seal { border-color: var(--bad); color: var(--bad); }
+.intake-steps li[data-state="skipped"] { opacity: 0.6; }

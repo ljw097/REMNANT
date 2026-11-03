@@ -9,6 +9,7 @@ import { Setup } from "./pages/Setup";
 import { ForcedPasswordChange } from "./pages/Password";
 import { Dashboard } from "./pages/Dashboard";
 import { RunsPage } from "./pages/Runs";
+import { AnalyzePage, IntakePage } from "./pages/Analyze";
 import { NewRunPage } from "./pages/NewRun";
 import { RunDetailPage } from "./pages/RunDetail";
 import { HypothesisPage } from "./pages/Hypothesis";
@@ -48,6 +49,7 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/", icon: "dashboard", label: "nav.dashboard" },
       { to: "/review", icon: "review", label: "nav.review", roles: ["reviewer"], count: (s) => s.awaiting_triage, attention: true },
       { to: "/approvals", icon: "approvals", label: "nav.approvals", count: (s) => s.pending_approvals, attention: true },
+      { to: "/analyze", icon: "branch", label: "nav.analyze", roles: ["researcher"] },
       { to: "/runs", icon: "runs", label: "nav.runs", count: (s) => s.active_runs },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
     ],
@@ -207,6 +209,8 @@ function Routes({ onMenu }: { onMenu: () => void }) {
   let m: Record<string, string> | null;
   if (path === "/") return <Dashboard />;
   if (path === "/runs") return <RunsPage />;
+  if (path === "/analyze") return <AnalyzePage />;
+  if ((m = match("/analyze/:id", path))) return <IntakePage id={Number(m.id)} />;
   if (path === "/runs/new") return <NewRunPage />;
   if ((m = match("/runs/:id", path))) return <RunDetailPage id={Number(m.id)} />;
   if (path === "/review") return <ReviewQueuePage />;

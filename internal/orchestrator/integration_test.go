@@ -215,6 +215,23 @@ func (f *fakeModel) CompleteJSON(ctx context.Context, req llm.Request) (llm.Resp
 		return llm.Response{}, errors.New("401 invalid x-api-key")
 	}
 	_, body, _ := strings.Cut(req.Input, "\n\n")
+	if req.AgentKey == roleHistorian {
+		var env historianEnvelope
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			return llm.Response{}, fmt.Errorf("bad historian envelope: %v", err)
+		}
+		usage := llm.Response{InputTokens: 700, OutputTokens: 200}
+		if !strings.Contains(env.Commit.Subject, "overflow") {
+			usage.JSON = json.RawMessage(`{"security_fix":false,"reason":"not a security fix","title":"","vulnerability_class":"","cwe_id":"","root_cause":"","preconditions":[],"code_signatures":[],"counter_signatures":[],"fix_summary":""}`)
+			return usage, nil
+		}
+		usage.JSON, _ = json.Marshal(map[string]any{"security_fix": true, "reason": "adds a missing bound before memcpy",
+			"title": "Copy length not bounded by destination", "vulnerability_class": "memory-safety", "cwe_id": "CWE-787",
+			"root_cause":    "A caller-supplied length is used for memcpy into a fixed-size field without comparing it to the field's size.",
+			"preconditions": []string{"len comes from input"}, "code_signatures": []string{"memcpy", "invented_helper"},
+			"counter_signatures": []string{"sizeof"}, "fix_summary": "checks len against sizeof(r->name) first"})
+		return usage, nil
+	}
 	var env struct {
 		Evidence []evidenceView `json:"evidence"`
 	}
@@ -1038,7 +1055,7 @@ func TestAgentAndResearchSettings(t *testing.T) {
 	e := setup(t)
 	agents, err := e.st.ListAgents(e.ctx)
 	must(t, err)
-	if len(agents) != 2 || agents[0].Role != "hypothesis_researcher" || agents[1].Role != "skeptic" {
+	if len(agents) != 3 || agents[0].Role != "historian" || agents[1].Role != "hypothesis_researcher" || agents[2].Role != "skeptic" {
 		t.Fatalf("agents = %+v", agents)
 	}
 	_, err = e.st.UpdateAgent(e.ctx, "hypothesis_researcher", store.AgentPatch{Config: &store.AgentConfig{Instructions: "Prefer integer overflow leads.", MaxCallTokens: 3000}})
@@ -1132,4 +1149,157 @@ func TestLLMProfileLifecycle(t *testing.T) {
 		t.Fatal("profile not cleared")
 	}
 	must(t, e.st.DeleteLLMProfile(e.ctx, spare.ID))
+}
+
+// gitRepo builds a repository whose history has one security fix (in
+// copy_name) and whose current code still has the same mistake elsewhere
+// (parse_header).
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	write := func(body string) {
+		must(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
+		must(t, os.WriteFile(filepath.Join(dir, "src", "parser.c"), []byte(body), 0o644))
+	}
+	git("init", "-q", "-b", "main")
+	write(parserC + "\nvoid copy_name(struct req *r, const char *buf, size_t len)\n{\n\tmemcpy(r->name, buf, len);\n}\n")
+	git("add", ".")
+	git("commit", "-q", "-m", "Initial import")
+	write(parserC + "\nvoid copy_name(struct req *r, const char *buf, size_t len)\n{\n\tif (len > sizeof(r->name))\n\t\treturn;\n\tmemcpy(r->name, buf, len);\n}\n")
+	git("commit", "-q", "-am", "copy_name: fix heap buffer overflow (CVE-2024-11111)")
+	must(t, os.WriteFile(filepath.Join(dir, "NEWS"), []byte("security fix\n"), 0o644))
+	git("add", ".")
+	git("commit", "-q", "-m", "Fix typo in NEWS")
+	return dir
+}
+
+// A repository URL becomes a run: fetch with history, the Historian drafts
+// a pattern from the fix, and the run hunts for the same mistake.
+func TestRepositoryIntake(t *testing.T) {
+	e := setup(t)
+	repo := gitRepo(t)
+	m := &fakeModel{}
+	o := New(e.st, e.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		LeaseTTL:  3 * time.Second,
+		NewClient: func(p llm.Profile) (llm.Client, error) { return m, nil },
+		Fetcher: &fetch.Fetcher{SnapshotDir: e.cfg.SnapshotDir(), AllowedHosts: []string{"git.example.test"},
+			LookupIP: func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			},
+			GitConfig: []string{"url." + repo + ".insteadOf=https://git.example.test/acme/parser", "protocol.file.allow=always"}},
+	})
+	ps, _ := e.st.ListLLMProfiles(e.ctx)
+	in, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser",
+		LLMProfileID: &ps[0].ID, Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	if in.Status != store.IntakeFetching || in.Options.HistoryDepth != 500 {
+		t.Fatalf("intake %+v", in)
+	}
+	// Nothing to do until the target is fetched.
+	if ok, err := o.IntakeOnce(e.ctx); ok || err != nil {
+		t.Fatalf("intake before fetch: %v %v", ok, err)
+	}
+	if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("fetch: %v %v", ok, err)
+	}
+	recs, err := e.st.CommitRecords(e.ctx, in.TargetID, 10, true)
+	must(t, err)
+	if len(recs) != 1 || !strings.Contains(recs[0].Subject, "overflow") {
+		t.Fatalf("commit records %+v", recs)
+	}
+	if ok, err := o.IntakeOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("intake: %v %v", ok, err)
+	}
+	in, err = e.st.GetIntake(e.ctx, in.ID)
+	must(t, err)
+	if in.Status != store.IntakeStarted || in.RunID == nil || len(in.Patterns) != 1 || in.CommitsFound != 1 || in.CommitsRead != 1 || in.OutputTokens != 200 {
+		t.Fatalf("intake after mining %+v", in)
+	}
+	p, err := e.st.GetPattern(e.ctx, in.Patterns[0])
+	must(t, err)
+	var sigs []string
+	must(t, json.Unmarshal(p.CodeSignatures, &sigs))
+	var origin map[string]any
+	must(t, json.Unmarshal(p.Origin, &origin))
+	if p.SourceKind != "mined" || p.ValidationStatus != "unreviewed" || p.Language != "c" || len(sigs) != 1 || sigs[0] != "memcpy" ||
+		origin["commit"] != recs[0].SHA || !strings.Contains(p.SourceRef, "git.example.test/acme/parser@") {
+		t.Fatalf("mined pattern %+v sigs %v origin %v", p, sigs, origin)
+	}
+	if m.count(roleHistorian) != 1 || !strings.Contains(m.systems[roleHistorian], "You are the Historian") {
+		t.Fatal("historian not called as expected")
+	}
+
+	// The run hunts with the mined pattern in the pinned checkout.
+	e.runOnce(o)
+	if st, msg := e.status(*in.RunID); st != research.RunReviewRequired {
+		t.Fatalf("run %s: %s", st, msg)
+	}
+	hs, err := e.st.ListHypotheses(e.ctx, *in.RunID)
+	must(t, err)
+	if len(hs) == 0 || hs[0].PatternID == nil || *hs[0].PatternID != p.ID {
+		t.Fatalf("hypotheses %+v", hs)
+	}
+}
+
+// An intake whose repository cannot be fetched fails with the reason, and
+// one without fixes or chosen patterns fails rather than starting an empty
+// run.
+func TestRepositoryIntakeFailures(t *testing.T) {
+	e := setup(t)
+	o := New(e.st, e.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{LeaseTTL: 3 * time.Second,
+		NewClient: func(p llm.Profile) (llm.Client, error) { return &fakeModel{}, nil },
+		Fetcher: &fetch.Fetcher{SnapshotDir: e.cfg.SnapshotDir(), AllowedHosts: []string{"git.example.test"},
+			LookupIP: func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("10.0.0.1")}, nil
+			}}})
+	in, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/x", ProjectName: "x",
+		Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	_, _ = o.FetchOnce(e.ctx)
+	_, err = o.IntakeOnce(e.ctx)
+	must(t, err)
+	in, _ = e.st.GetIntake(e.ctx, in.ID)
+	if in.Status != store.IntakeFailed || !strings.Contains(in.ErrorSummary, "non-public address") {
+		t.Fatalf("unfetchable intake %+v", in)
+	}
+	if _, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/y", ProjectName: "y",
+		Options: store.IntakeOptions{MineHistory: false}}, e.alice); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("no mining and no patterns: %v", err)
+	}
+}
+
+func TestMinedPatternValidation(t *testing.T) {
+	c := store.CommitRecord{SHA: strings.Repeat("a", 40), Subject: "fix overflow", Files: []string{"lib/x.go"},
+		Diff: "--- a/lib/x.go\n+++ b/lib/x.go\n@@ -1,3 +1,4 @@\n func copyIn(dst, src []byte) {\n+\tif len(src) > len(dst) { return }\n-\tcopy(dst, src)\n }\n"}
+	ok := historianOutput{SecurityFix: true, Title: "Unbounded copy", VulnerabilityClass: "memory-safety", RootCause: "copies without bounds",
+		CodeSignatures: []string{"copyIn", "copy", "len", "missing_fn", "a b"}, CounterSignatures: []string{"len", "copyIn"}}
+	p, err := minedPattern(ok, c, "https://h/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(p.CodeSignatures, ",") != "copyIn,copy" || strings.Join(p.CounterSignatures, ",") != "len" || p.Language != "go" {
+		t.Fatalf("sigs %v counters %v lang %q", p.CodeSignatures, p.CounterSignatures, p.Language)
+	}
+	for name, bad := range map[string]historianOutput{
+		"not a fix":    {SecurityFix: false},
+		"no title":     {SecurityFix: true, VulnerabilityClass: "x", RootCause: "y", CodeSignatures: []string{"copy"}},
+		"bad cwe":      {SecurityFix: true, Title: "t", VulnerabilityClass: "x", RootCause: "y", CWEID: "787", CodeSignatures: []string{"copy"}},
+		"invented sig": {SecurityFix: true, Title: "t", VulnerabilityClass: "x", RootCause: "y", CodeSignatures: []string{"memcpy"}},
+	} {
+		if _, err := minedPattern(bad, c, "https://h/r"); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
 }

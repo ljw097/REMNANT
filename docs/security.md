@@ -44,6 +44,13 @@ The web UI is served with a strict Content-Security-Policy (same-origin scripts,
 - A git target's revision is its commit SHA; its tree digest is recorded too, and every run and worker request re-hashes the checkout against it.
 - Repository text, comments and embedded prompts are untrusted data for agents (see `agent-contracts.md`).
 
+## Repository history (intake)
+
+- An intake fetches only from hosts in `REMNANT_REPO_HOSTS`, through the same fetcher as other git targets: https only, no redirects, credentials, hooks or submodules, the connection pinned to a public address checked before fetching, and a size limit. With remote repositories off, the intake API refuses with `source_policy`.
+- History is read inside the temporary clone, before `.git` is removed: up to `history_depth` commits (≤5000), commit messages scored for security-fix signals, and for at most 60 candidates the diff of modified source files (≤20 files, ≤16 KiB, `--no-ext-diff --no-textconv`, so repository attributes cannot run drivers). Commits at the shallow boundary are skipped. Only this text is stored (`commit_records`); the snapshot remains the tree alone.
+- Commit messages and diffs are untrusted. The Historian receives them as data in its task envelope under rules that tell it to ignore instructions inside; its answer is schema-checked, and its code signatures are kept only if they appear on the pre-fix side of the diff, so a pattern cannot point at invented code.
+- Mined patterns are recorded with `source_kind = mined`, the commit they came from, and `unreviewed` status; they feed a run like any other pattern, and their hypotheses go through the same triage and approval rules.
+
 ## Worker isolation
 
 Implemented by `internal/sandbox` (bwrap inside a systemd user cgroup scope); see `worker-protocol.md`. In short: read-only source mount, write-only output directory, no network at the namespace level, non-root, dropped capabilities, seccomp/AppArmor, PID/CPU/memory/time limits, no container-runtime socket, no host home directories, SSH agents, cloud credentials, browser profiles, or REMNANT configuration and secrets. Everything a worker returns is validated before it is stored.

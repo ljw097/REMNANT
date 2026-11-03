@@ -75,7 +75,7 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, p ProjectPatch) (Pr
 }
 
 const targetCols = `id, project_id, kind, display_name, source_uri, source_ref, snapshot_key,
-	revision, tree_sha256, primary_language, status, metadata, created_at`
+	revision, tree_sha256, primary_language, status, metadata, history_depth, created_at`
 
 type TargetInput struct {
 	Kind            string
@@ -87,16 +87,19 @@ type TargetInput struct {
 	TreeSHA256      string
 	PrimaryLanguage string
 	Status          string
+	// HistoryDepth asks the fetch to keep fix candidates from this many
+	// recent commits (git targets only).
+	HistoryDepth int
 }
 
 func (s *Store) CreateTarget(ctx context.Context, projectID int64, in TargetInput) (Target, error) {
 	t, err := one[Target](s.pool.Query(ctx, `
 		INSERT INTO targets(project_id, kind, display_name, source_uri, source_ref, snapshot_key,
-		                    revision, tree_sha256, primary_language, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		                    revision, tree_sha256, primary_language, status, history_depth)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING `+targetCols,
 		projectID, in.Kind, in.DisplayName, in.SourceURI, in.SourceRef, in.SnapshotKey,
-		in.Revision, in.TreeSHA256, in.PrimaryLanguage, in.Status))
+		in.Revision, in.TreeSHA256, in.PrimaryLanguage, in.Status, in.HistoryDepth))
 	return t, mapErr(err)
 }
 

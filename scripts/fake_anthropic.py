@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Minimal stand-in for POST /v1/messages, used by scripts/smoke.sh.
 
-It answers as the Hypothesis Researcher or the Skeptic by reading the task
-envelope remnantd sends, so the smoke test exercises the real SDK client,
+It answers as the Historian, the Hypothesis Researcher or the Skeptic by
+reading the task envelope remnantd sends, so the smoke test exercises the real SDK client,
 structured-output request and response handling without network access.
 GET /calls returns how many requests were served per role; POST /delay?s=N
 makes every later answer take N seconds (used to interrupt a run mid-stage).
 """
 import json
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,42 @@ calls = {"researcher": 0, "skeptic": 0}
 delay = [0.0]
 
 
+KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof", "else", "case", "do", "goto", "defined"}
+
+
+def historian(envelope):
+    """A synthetic pattern from a fix commit: the first called identifiers
+    on the pre-fix side of the diff become the code signatures."""
+    calls["historian"] = calls.get("historian", 0) + 1
+    commit = envelope["commit"]
+    before, added = [], []
+    for line in commit["diff"].splitlines():
+        if line.startswith(("+++", "---", "@@", "diff ", "index ")):
+            continue
+        (added if line.startswith("+") else before).append(line[1:])
+    called = lambda lines: [m for l in lines for m in re.findall(r"\b([A-Za-z_]\w{2,})\s*\(", l) if m not in KEYWORDS]
+    sigs = list(dict.fromkeys(called(before)))[:3]
+    counters = [c for c in dict.fromkeys(called(added)) if c not in sigs][:2]
+    if not sigs:
+        return {"security_fix": False, "reason": "no call to anchor a pattern on", "title": "", "vulnerability_class": "",
+                "cwe_id": "", "root_cause": "", "preconditions": [], "code_signatures": [], "counter_signatures": [], "fix_summary": ""}
+    return {
+        "security_fix": True,
+        "reason": "synthetic answer from scripts/fake_anthropic.py",
+        "title": "Synthetic: " + commit["subject"][:120],
+        "vulnerability_class": "memory-safety",
+        "cwe_id": "",
+        "root_cause": "SYNTHETIC (fake model): the fix in this commit adds a check around " + ", ".join(sigs) + ".",
+        "preconditions": ["synthetic demo answer"],
+        "code_signatures": sigs,
+        "counter_signatures": counters,
+        "fix_summary": commit["subject"][:200],
+    }
+
+
 def answer(system, envelope):
+    if "You are the Historian" in system:
+        return historian(envelope)
     ev = envelope["evidence"][0]
     if "Hypothesis Researcher" in system:
         calls["researcher"] += 1

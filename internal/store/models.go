@@ -81,6 +81,7 @@ type Target struct {
 	PrimaryLanguage string          `db:"primary_language" json:"primary_language"`
 	Status          string          `db:"status" json:"status"`
 	Metadata        json.RawMessage `db:"metadata" json:"metadata"`
+	HistoryDepth    int             `db:"history_depth" json:"history_depth"`
 	CreatedAt       time.Time       `db:"created_at" json:"created_at"`
 }
 
@@ -106,6 +107,9 @@ type Pattern struct {
 	ReviewedAt         *time.Time      `db:"reviewed_at" json:"reviewed_at"`
 	CreatedAt          time.Time       `db:"created_at" json:"created_at"`
 	SelfReviewed       bool            `db:"self_reviewed" json:"self_reviewed"`
+	// Origin says where a mined pattern came from (repository, commit,
+	// intake); empty for other patterns.
+	Origin json.RawMessage `db:"origin" json:"origin"`
 }
 
 type Run struct {
