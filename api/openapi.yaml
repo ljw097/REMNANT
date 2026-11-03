@@ -89,7 +89,7 @@ paths:
               type: object
               required: [model, api_key]
               properties:
-                provider: { type: string, enum: [anthropic], default: anthropic }
+                provider: { type: string, enum: [anthropic, openai], default: anthropic }
                 base_url: { type: string }
                 model: { type: string }
                 api_key: { type: string, writeOnly: true }
@@ -838,7 +838,7 @@ components:
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
-        provider: { type: string, enum: [anthropic] }
+        provider: { type: string, enum: [anthropic, openai] }
         base_url: { type: string }
         model: { type: string }
         effort: { type: string, enum: [low, medium, high, xhigh, max] }
@@ -853,7 +853,7 @@ components:
       required: [name, provider, model, api_key]
       properties:
         name: { type: string, maxLength: 120 }
-        provider: { type: string, enum: [anthropic] }
+        provider: { type: string, enum: [anthropic, openai] }
         base_url: { type: string, description: Optional API base URL override }
         model: { type: string, examples: [claude-opus-5-5] }
         effort: { type: string, enum: [low, medium, high, xhigh, max], default: high }

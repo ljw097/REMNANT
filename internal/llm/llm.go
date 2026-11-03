@@ -74,6 +74,8 @@ func NewClient(p Profile) (Client, error) {
 	switch p.Provider {
 	case "anthropic":
 		return &anthropicClient{client: anthropic.NewClient(requestOptions(p)...), model: p.Model, effort: p.Effort, thinking: p.Options.Thinking}, nil
+	case "openai":
+		return newOpenAIClient(p), nil
 	}
 	return nil, fmt.Errorf("llm: unsupported provider %q", p.Provider)
 }
@@ -98,6 +100,9 @@ func requestOptions(p Profile) []option.RequestOption {
 // Check verifies a profile's key, endpoint and model by looking the model
 // up; it spends no tokens. It returns the model's display name.
 func Check(ctx context.Context, p Profile) (string, error) {
+	if p.Provider == "openai" {
+		return openaiCheck(ctx, p)
+	}
 	if p.Provider != "anthropic" {
 		return "", fmt.Errorf("llm: unsupported provider %q", p.Provider)
 	}

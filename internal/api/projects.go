@@ -42,7 +42,7 @@ func (s *Server) createLLMProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validate(w,
 		required("name", in.Name, 120),
-		oneOf("provider", in.Provider, "anthropic"),
+		oneOf("provider", in.Provider, "anthropic", "openai"),
 		required("model", in.Model, 200),
 		oneOf("effort", in.Effort, "low", "medium", "high", "xhigh", "max"),
 		required("api_key", in.APIKey, 4096),

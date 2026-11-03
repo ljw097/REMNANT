@@ -133,7 +133,7 @@ func (s *Server) testUnsavedProfile(w http.ResponseWriter, r *http.Request) {
 	if in.Provider == "" {
 		in.Provider = "anthropic"
 	}
-	if !validate(w, oneOf("provider", in.Provider, "anthropic"), required("model", in.Model, 200),
+	if !validate(w, oneOf("provider", in.Provider, "anthropic", "openai"), required("model", in.Model, 200),
 		required("api_key", in.APIKey, 4096), maxLen("base_url", in.BaseURL, 2048), checkBaseURL(in.BaseURL), checkOptions(in.Options)) {
 		return
 	}
