@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Frame } from "../App";
-import { download, getText, post } from "../api/client";
+import { download, post } from "../api/client";
 import { streamRunEvents } from "../api/sse";
 import { useApi, type Query } from "../hooks";
 import { useI18n, type Key } from "../i18n";
@@ -9,7 +9,7 @@ import { useSession } from "../session";
 import type { Artifact, Experiment, Hypothesis, LLMProfile, Project, RunDetail, RunEvent, Target } from "../api/types";
 import { Button, ConfirmButton, Empty, ErrorNote, errorText, Hash, Panel, Priority, Ref, SkeletonRows, State, Tabs, Time, useToast } from "../ui/components";
 import { DocHeader, PolicyList, SectionTitle, StageLine } from "../ui/domain";
-import { Markdown } from "../ui/Markdown";
+import { ReportView } from "../ui/ReportView";
 import { ColumnPicker, useColumns } from "../ui/ColumnPicker";
 import { experimentLook, hypothesisLook, pausableRun, runLook, terminalRun } from "../ui/status";
 
@@ -217,7 +217,7 @@ export function RunDetailPage({ id }: { id: number }) {
               { value: "artifacts", label: <><span className="section-no">§7</span>{t("run.tab.artifacts")}</>, count: arts.data?.length },
             ]}
           />
-          {tab === "report" ? <ReportView runId={id} art={reportArt} loading={arts.loading && !arts.data} /> : null}
+          {tab === "report" ? <ReportView runId={id} /> : null}
           {tab === "hypotheses" ? <HypothesesTable q={hyps} runId={id} /> : null}
           {tab === "experiments" ? <ExperimentsTable q={exps} /> : null}
           {tab === "activity" ? <Activity events={events} /> : null}
@@ -393,46 +393,6 @@ function Activity({ events }: { events: RunEvent[] }) {
           ))}
         </ol>
       )}
-    </Panel>
-  );
-}
-
-// Renders the run's Markdown report in the page (no download needed), with a
-// download button kept for the raw file.
-function ReportView({ runId, art, loading }: { runId: number; art?: Artifact; loading: boolean }) {
-  const { t } = useI18n();
-  const toast = useToast();
-  const [md, setMd] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (!art) return;
-    setMd(null);
-    setFailed(false);
-    const ac = new AbortController();
-    getText(`/runs/${runId}/artifacts/${art.id}`, ac.signal)
-      .then(setMd)
-      .catch((e) => {
-        if ((e as Error).name !== "AbortError") setFailed(true);
-      });
-    return () => ac.abort();
-  }, [art?.id, runId]);
-
-  if (!art) {
-    return (
-      <Panel>
-        {loading ? <SkeletonRows rows={4} cols={1} /> : <Empty title={t("run.noReport")} body={t("run.noReportBody")} />}
-      </Panel>
-    );
-  }
-  return (
-    <Panel
-      tools={
-        <Button size="sm" icon="download" onClick={() => download(`/runs/${runId}/artifacts/${art.id}`, art.name).catch(() => toast(t("art.unavailable"), "bad"))}>
-          {t("art.download")}
-        </Button>
-      }
-    >
-      {failed ? <ErrorNote error={t("art.unavailable")} /> : md == null ? <SkeletonRows rows={6} cols={1} /> : <Markdown source={md} />}
     </Panel>
   );
 }

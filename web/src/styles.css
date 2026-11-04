@@ -773,3 +773,10 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .md-pre code { font: var(--fs-1)/1.6 var(--font-mono); background: none; border: 0; padding: 0; }
 .md-table { margin: 0; }
 .md .table-wrap { margin: 0.9em 0; }
+
+/* Reports page: the finished-run list beside the rendered report. */
+.report-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.report-row { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; text-align: left; color: inherit; font: inherit; }
+.report-row:hover { background: var(--panel-hover); }
+.report-row[aria-current="true"] { background: var(--panel); box-shadow: inset 2px 0 0 var(--primary); }
+.report-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
