@@ -282,7 +282,7 @@ const ko = {
   "newRun.workers": "동시 작업 수",
   "newRun.workersHint": "1–4. 모델 호출을 동시에 몇 개 할지 정합니다.",
   "newRun.wall": "작업 시간 한도(초)",
-  "newRun.wallHint": "60–3600. 일시정지한 시간은 세지 않습니다.",
+  "newRun.wallHint": "60~86400. 일시정지한 시간은 세지 않습니다.",
   "newRun.tokens": "출력 토큰 예산",
   "newRun.tokensHint": "모델의 사고 토큰을 포함한 전체 출력 한도입니다.",
   "newRun.confirm": "확인",

@@ -282,7 +282,7 @@ const en: Record<keyof typeof ko, string> = {
   "newRun.workers": "Parallel workers",
   "newRun.workersHint": "1–4 model calls at a time.",
   "newRun.wall": "Working-time limit (s)",
-  "newRun.wallHint": "60–3600. Paused time does not count.",
+  "newRun.wallHint": "60 to 86400. Paused time does not count.",
   "newRun.tokens": "Output-token budget",
   "newRun.tokensHint": "Total model output, thinking included.",
   "newRun.confirm": "Confirm",
