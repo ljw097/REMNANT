@@ -6,7 +6,7 @@ import { download, getText } from "../api/client";
 import { useApi } from "../hooks";
 import { useI18n } from "../i18n";
 import type { Artifact } from "../api/types";
-import { Button, Empty, ErrorNote, Panel, SkeletonRows, useToast } from "./components";
+import { Button, Empty, ErrorNote, SkeletonRows, useToast } from "./components";
 import { Markdown } from "./Markdown";
 
 export function ReportView({ runId }: { runId: number }) {
@@ -31,17 +31,24 @@ export function ReportView({ runId }: { runId: number }) {
   }, [art?.id, runId]);
 
   if (!art) {
-    return <Panel>{arts.loading && !arts.data ? <SkeletonRows rows={4} cols={1} /> : <Empty title={t("run.noReport")} body={t("run.noReportBody")} />}</Panel>;
+    return (
+      <div className="report-doc">
+        {arts.loading && !arts.data ? <SkeletonRows rows={4} cols={1} /> : <Empty title={t("run.noReport")} body={t("run.noReportBody")} />}
+      </div>
+    );
   }
   return (
-    <Panel
-      tools={
-        <Button size="sm" icon="download" onClick={() => download(`/runs/${runId}/artifacts/${art.id}`, art.name).catch(() => toast(t("art.unavailable"), "bad"))}>
-          {t("art.download")}
-        </Button>
-      }
-    >
+    <div className="report-doc">
+      <Button
+        className="report-dl"
+        variant="ghost"
+        size="sm"
+        icon="download"
+        onClick={() => download(`/runs/${runId}/artifacts/${art.id}`, art.name).catch(() => toast(t("art.unavailable"), "bad"))}
+      >
+        {t("art.download")}
+      </Button>
       {failed ? <ErrorNote error={t("art.unavailable")} /> : md == null ? <SkeletonRows rows={6} cols={1} /> : <Markdown source={md} refs />}
-    </Panel>
+    </div>
   );
 }
