@@ -292,6 +292,7 @@ const ko = {
   "run.resumed": "런을 재개했습니다. 끝난 단계는 다시 하지 않습니다.",
   "run.cancelled": "런을 취소했습니다.",
   "run.finalized": "보고서를 만드는 중입니다.",
+  "run.tab.report": "보고서",
   "run.tab.hypotheses": "가설",
   "run.tab.experiments": "실험",
   "run.tab.activity": "활동",
@@ -303,6 +304,8 @@ const ko = {
   "run.noActivity": "아직 기록이 없습니다",
   "run.noArtifacts": "결과물이 없습니다",
   "run.noArtifactsBody": "인덱스, 분석 결과, 보고서가 여기에 쌓입니다.",
+  "run.noReport": "아직 보고서가 없습니다",
+  "run.noReportBody": "실행이 끝나면 보고서가 작성되어 여기에 전체 내용이 렌더링되어 나타납니다.",
 
   "exp.col.operation": "연산",
   "exp.col.status": "결과",

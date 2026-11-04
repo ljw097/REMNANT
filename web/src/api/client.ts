@@ -65,6 +65,21 @@ export const patch = <T,>(path: string, body: unknown) => api<T>("PATCH", path, 
 export const put = <T,>(path: string, body: unknown) => api<T>("PUT", path, body);
 export const del = <T,>(path: string) => api<T>("DELETE", path);
 
+/** Fetches an authenticated resource as plain text (e.g. a Markdown report). */
+export async function getText(path: string, signal?: AbortSignal): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { headers: authHeaders(), credentials: "same-origin", signal });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
+    throw new ApiError(0, "network", "network");
+  }
+  if (res.status === 401 && !path.startsWith("/auth/")) unauthorized.forEach((fn) => fn());
+  const text = await res.text();
+  if (!res.ok) throw new ApiError(res.status, "http_" + res.status, res.statusText);
+  return text;
+}
+
 /** Downloads an authenticated artifact and hands it to the browser as a file. */
 export async function download(path: string, filename: string): Promise<void> {
   const res = await fetch(`/api/v1${path}`, { headers: authHeaders(), credentials: "same-origin" });
