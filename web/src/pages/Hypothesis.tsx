@@ -5,7 +5,7 @@ import { useApi, useHotkeys, useUserNames } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Link, navigate, useLocation } from "../router";
 import { useSession } from "../session";
-import type { Approval, Evidence, Experiment, Hypothesis, HypothesisDetail, LabLimits, Project, Run } from "../api/types";
+import type { Approval, Evidence, Experiment, Hypothesis, HypothesisDetail, LabLimits, Pattern, Project, Run } from "../api/types";
 import { Alert, Button, Drawer, Empty, ErrorNote, errorText, Field, Hash, Panel, Priority, Ref, SkeletonRows, State, Time, useToast } from "../ui/components";
 import { Custody, Excerpt, HypothesisFlow, PolicyList, SectionTitle, type CustodyEntry } from "../ui/domain";
 import { decisionLook, experimentLook, hypothesisLook } from "../ui/status";
@@ -108,6 +108,9 @@ function Review({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string>();
   const [labOpen, setLabOpen] = useState(false);
+  // The historical origin of this finding: the root-cause pattern it came from
+  // (mined from a fix commit or a known advisory), or none for a direct audit.
+  const pattern = useApi<Pattern>(h.pattern_id ? `/patterns/${h.pattern_id}` : null);
 
   const sources = h.evidence.filter((e) => e.evidence_kind === "source_location");
   const counters = h.evidence.filter((e) => e.evidence_kind === "counter_evidence");
@@ -261,6 +264,35 @@ function Review({
         </div>
       </Panel>
 
+      <Panel title={t("origin.title")} meta={t("origin.sub")}>
+        <div className="panel-body">
+          {h.pattern_id === null ? (
+            <p className="small ink-2" style={{ margin: 0 }}>
+              {t("origin.general")}
+            </p>
+          ) : pattern.data ? (
+            <div className="stack" style={{ gap: 4 }}>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <Ref kind="P" id={pattern.data.id} to={`/patterns/${pattern.data.id}`} />
+                <strong>{pattern.data.title}</strong>
+                <span className="small ink-2">
+                  {pattern.data.vulnerability_class}
+                  {pattern.data.cwe_id ? ` · ${pattern.data.cwe_id}` : ""}
+                </span>
+              </div>
+              {pattern.data.source_ref ? (
+                <p className="small ink-2" style={{ margin: 0 }}>
+                  {t("origin.ref")} <span className="mono">{pattern.data.source_ref}</span>
+                </p>
+              ) : null}
+              {pattern.data.root_cause ? <p className="small ink-2" style={{ margin: "2px 0 0" }}>{pattern.data.root_cause}</p> : null}
+            </div>
+          ) : (
+            <SkeletonRows rows={1} cols={1} />
+          )}
+        </div>
+      </Panel>
+
       <div className="review">
         <div className="stack" style={{ gap: 18, minWidth: 0 }}>
           <Panel>
@@ -296,7 +328,19 @@ function Review({
                 <Empty title={t("hyp.noEvidence")} />
               </Panel>
             ) : (
-              sources.map((ev) => <Excerpt key={ev.id} ev={ev} marks={marksFor(ev)} refNode={<Ref kind="E" id={ev.id} />} />)
+              sources.map((ev) => {
+                const guards = Array.isArray(ev.metadata.countered) ? (ev.metadata.countered as string[]).filter(Boolean) : [];
+                return (
+                  <div key={ev.id} className="stack" style={{ gap: 6 }}>
+                    <Excerpt ev={ev} marks={marksFor(ev)} refNode={<Ref kind="E" id={ev.id} />} />
+                    {guards.length ? (
+                      <p className="guard-note small">
+                        {t("origin.guards")} <span className="mono">{guards.join(", ")}</span> — {t("origin.guardsNote")}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })
             )}
             {observations.length ? (
               <Panel title={t("hyp.observations")}>

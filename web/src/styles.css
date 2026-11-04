@@ -780,3 +780,6 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .report-row:hover { background: var(--panel-hover); }
 .report-row[aria-current="true"] { background: var(--panel); box-shadow: inset 2px 0 0 var(--primary); }
 .report-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+/* Historical "guards present" note shown beside a flagged excerpt. */
+.guard-note { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--rule)); color: var(--ink-2); }
