@@ -5,6 +5,34 @@
 // code, bold/italic, and links.
 
 import type { ReactNode } from "react";
+import { navigate } from "../router";
+
+// Entity references the REMNANT report writes — [H-2], [R-4], [P-3] — and CVE
+// ids. When `refs` is on they become links to the detail page (or NVD), so a
+// report reads like the app: click a reference to open what it names.
+const refTo: Record<string, (n: string) => string> = {
+  H: (n) => `/hypotheses/${n}`,
+  R: (n) => `/runs/${n}`,
+  P: (n) => `/patterns/${n}`,
+};
+
+function RefLink({ to, children }: { to: string; children: ReactNode }) {
+  const external = /^https?:/.test(to);
+  return (
+    <a
+      href={to}
+      className="md-ref"
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      onClick={(e) => {
+        if (external || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        navigate(to);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 type Block =
   | { t: "heading"; level: number; text: string }
@@ -102,9 +130,9 @@ function parse(src: string): Block[] {
 
 // Inline formatting: `code`, **bold**, *italic* / _italic_, [text](url).
 // Code spans win first so markup inside them stays literal.
-function inline(text: string, keyBase: string): ReactNode[] {
+function inline(text: string, keyBase: string, refs = false): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))/g;
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))|(\[[HRP]-\d+\])|(\bCVE-\d{4}-\d{4,7}\b)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let n = 0;
@@ -112,10 +140,14 @@ function inline(text: string, keyBase: string): ReactNode[] {
     if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
     const k = `${keyBase}-${n++}`;
+    const ref = tok.match(/^\[([HRP])-(\d+)\]$/);
+    const cve = /^CVE-/.test(tok);
     if (tok.startsWith("`")) out.push(<code key={k} className="md-code">{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("**")) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>);
     else if (tok.startsWith("*")) out.push(<em key={k}>{tok.slice(1, -1)}</em>);
     else if (tok.startsWith("_")) out.push(<em key={k}>{tok.slice(1, -1)}</em>);
+    else if (ref) out.push(refs ? <RefLink key={k} to={refTo[ref[1]!]!(ref[2]!)}>{tok}</RefLink> : <span key={k} className="md-ref-flat">{tok}</span>);
+    else if (cve) out.push(refs ? <RefLink key={k} to={`https://nvd.nist.gov/vuln/detail/${tok}`}>{tok}</RefLink> : <span key={k}>{tok}</span>);
     else {
       const lm = tok.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       const label = lm?.[1] ?? tok;
@@ -133,8 +165,9 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return out;
 }
 
-export function Markdown({ source }: { source: string }) {
+export function Markdown({ source, refs = false }: { source: string; refs?: boolean }) {
   const blocks = parse(source);
+  const il = (text: string, key: string) => inline(text, key, refs);
   return (
     <div className="md">
       {blocks.map((b, i) => {
@@ -142,17 +175,17 @@ export function Markdown({ source }: { source: string }) {
         switch (b.t) {
           case "heading": {
             const H = `h${Math.min(b.level + 1, 6)}` as "h2" | "h3" | "h4" | "h5" | "h6";
-            return <H key={key}>{inline(b.text, key)}</H>;
+            return <H key={key}>{il(b.text, key)}</H>;
           }
           case "p":
-            return <p key={key}>{inline(b.text, key)}</p>;
+            return <p key={key}>{il(b.text, key)}</p>;
           case "hr":
             return <hr key={key} />;
           case "quote":
             return (
               <blockquote key={key}>
                 {b.lines.map((l, j) => (
-                  <p key={j}>{inline(l, `${key}-${j}`)}</p>
+                  <p key={j}>{il(l, `${key}-${j}`)}</p>
                 ))}
               </blockquote>
             );
@@ -166,7 +199,7 @@ export function Markdown({ source }: { source: string }) {
             return (
               <ul key={key}>
                 {b.items.map((it, j) => (
-                  <li key={j}>{inline(it, `${key}-${j}`)}</li>
+                  <li key={j}>{il(it, `${key}-${j}`)}</li>
                 ))}
               </ul>
             );
@@ -174,7 +207,7 @@ export function Markdown({ source }: { source: string }) {
             return (
               <ol key={key}>
                 {b.items.map((it, j) => (
-                  <li key={j}>{inline(it, `${key}-${j}`)}</li>
+                  <li key={j}>{il(it, `${key}-${j}`)}</li>
                 ))}
               </ol>
             );
@@ -185,7 +218,7 @@ export function Markdown({ source }: { source: string }) {
                   <thead>
                     <tr>
                       {b.header.map((c, j) => (
-                        <th key={j}>{inline(c, `${key}-h${j}`)}</th>
+                        <th key={j}>{il(c, `${key}-h${j}`)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -193,7 +226,7 @@ export function Markdown({ source }: { source: string }) {
                     {b.rows.map((row, j) => (
                       <tr key={j}>
                         {row.map((c, k) => (
-                          <td key={k}>{inline(c, `${key}-${j}-${k}`)}</td>
+                          <td key={k}>{il(c, `${key}-${j}-${k}`)}</td>
                         ))}
                       </tr>
                     ))}

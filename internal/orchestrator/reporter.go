@@ -16,7 +16,7 @@ const roleReporter = "reporter"
 
 const reporterSystem = `You are the Reporter in REMNANT, a source-code vulnerability research system operated by people who own or are authorised to review the code. You write the report a human researcher will read, review and, after their own check, send to the maintainers as a responsible-disclosure report.
 
-You receive the run's accepted and validated hypotheses with their claims, facts, preconditions, evidence locations and any lab experiment results. Write clearly and plainly, the way a careful security engineer writes: specific, calm, no marketing words, no exaggeration. Ground every statement in the data provided and cite hypotheses as H<id> and evidence as E<id>.
+You receive the run's accepted and validated hypotheses with their claims, facts, preconditions, evidence locations and any lab experiment results. Write clearly and plainly, the way a careful security engineer writes: specific, calm, no marketing words, no exaggeration. Ground every statement in the data provided and cite hypotheses as [H-<id>] and evidence as [E-<id>] (always with the brackets and hyphen, e.g. [H-2]), so a reader can click the reference to open it.
 
 Be honest about certainty. A hypothesis that was accepted but not confirmed by a lab experiment is a CANDIDATE, not a proven vulnerability; say so. A crash or sanitizer result is an observation; do not claim exploitability it does not show. Prefer "may", "appears", "is consistent with" over "is" when the evidence is static only.
 
@@ -254,7 +254,7 @@ func renderNarrativeMarkdown(rep store.RunReport, out reporterOutput, generated 
 		if candidate {
 			label = "candidate — not confirmed by a lab experiment"
 		}
-		p("### H%d — %s\n\n", h.ID, inline(h.Title))
+		p("### [H-%d] %s\n\n", h.ID, inline(h.Title))
 		p("**Severity (estimated):** %s · **Status:** %s", nz(f.Severity, "informational"), label)
 		if h.CWEID != "" {
 			p(" · %s", h.CWEID)
@@ -276,7 +276,7 @@ func renderNarrativeMarkdown(rep store.RunReport, out reporterOutput, generated 
 				if e.LineStart != nil {
 					loc += fmt.Sprintf(":%d", *e.LineStart)
 				}
-				p("E%d (`%s`)", e.ID, loc)
+				p("[E-%d] (`%s`)", e.ID, loc)
 			}
 			p("\n\n")
 		}

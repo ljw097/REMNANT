@@ -783,3 +783,29 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 
 /* Historical "guards present" note shown beside a flagged excerpt. */
 .guard-note { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--rule)); color: var(--ink-2); }
+
+/* Clickable entity references inside a rendered report ([H-2], CVE-…). */
+.md-ref { font: 0.92em var(--font-mono); color: var(--accent); text-decoration: none; padding: 0.02em 0.3em; border-radius: 3px; background: color-mix(in oklch, var(--accent) 9%, var(--surface)); white-space: nowrap; }
+.md-ref:hover { background: color-mix(in oklch, var(--accent) 16%, var(--surface)); text-decoration: underline; text-underline-offset: 2px; }
+.md-ref-flat { font: 0.92em var(--font-mono); color: var(--ink-2); padding: 0.02em 0.3em; border-radius: 3px; background: var(--code-bg); }
+:root[data-theme="dark"] .md-ref, :root:not([data-theme="light"]) .md-ref { color: var(--info); }
+
+/* Navigable-row affordance: a drawn chevron that signals "opens a detail",
+   quiet at rest and clearer on hover. Applied to the lists and rows that link
+   to a detail page so clickability is obvious. */
+.item-list li a, .run-line, .report-row { position: relative; padding-right: 30px; }
+.item-list li a::after, .run-line::after, .report-row::after {
+  content: ""; position: absolute; right: 11px; top: 50%; width: 15px; height: 15px; margin-top: -7.5px;
+  background-color: var(--ink-3);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") no-repeat center / contain;
+  opacity: 0.28; transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.item-list li a:hover::after, .run-line:hover::after, .report-row:hover::after { opacity: 0.85; transform: translateX(2px); color: var(--accent); background-color: var(--accent); }
+.report-row { padding-right: 34px; }
+@media (prefers-reduced-motion: reduce) { .item-list li a::after, .run-line::after, .report-row::after { transition: none; } }
+
+/* A reference that links to its entity reads as clickable; a bare one does not. */
+a.ref { transition: color 0.1s ease, background 0.1s ease; }
+a.ref:hover { color: var(--accent); background: color-mix(in oklch, var(--accent) 13%, var(--surface)); text-decoration: underline; text-underline-offset: 2px; }
+:root[data-theme="dark"] a.ref:hover, :root:not([data-theme="light"]) a.ref:hover { color: var(--info); background: color-mix(in oklch, var(--info) 15%, var(--surface)); }
