@@ -150,8 +150,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		countErr = badRequest("target_ids must contain 1–10 targets")
 	case len(in.PatternIDs) > 100:
 		countErr = badRequest("pattern_ids may contain at most 100 patterns")
-	case len(in.PatternIDs) == 0 && !in.AutoDiscover:
-		countErr = badRequest("give at least one pattern, or set auto_discover for a general (patternless) audit")
 	}
 	if !validate(w, countErr, limitErr) {
 		return
