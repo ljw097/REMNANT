@@ -13,6 +13,7 @@ import { RunsPage } from "./pages/Runs";
 import { AnalyzePage, IntakePage } from "./pages/Analyze";
 import { NewRunPage } from "./pages/NewRun";
 import { RunDetailPage } from "./pages/RunDetail";
+import { ReportsPage } from "./pages/Reports";
 import { HypothesisPage } from "./pages/Hypothesis";
 import { ReviewQueuePage } from "./pages/Review";
 import { ApprovalsPage } from "./pages/Approvals";
@@ -52,6 +53,7 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/approvals", icon: "approvals", label: "nav.approvals", count: (s) => s.pending_approvals, attention: true },
       { to: "/analyze", icon: "branch", label: "nav.analyze", roles: ["researcher"] },
       { to: "/runs", icon: "runs", label: "nav.runs", count: (s) => s.active_runs },
+      { to: "/reports", icon: "file", label: "nav.reports" },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
     ],
   },
@@ -238,6 +240,8 @@ function Routes({ onMenu }: { onMenu: () => void }) {
   let m: Record<string, string> | null;
   if (path === "/") return <Dashboard />;
   if (path === "/runs") return <RunsPage />;
+  if (path === "/reports") return <ReportsPage />;
+  if ((m = match("/reports/:id", path))) return <ReportsPage id={Number(m.id)} />;
   if (path === "/analyze") return <AnalyzePage />;
   if ((m = match("/analyze/:id", path))) return <IntakePage id={Number(m.id)} />;
   if (path === "/runs/new") return <NewRunPage />;

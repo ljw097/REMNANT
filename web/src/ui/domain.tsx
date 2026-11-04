@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useI18n, type Key } from "../i18n";
-import type { Evidence, RunStatus } from "../api/types";
+import type { Evidence, Hypothesis, RunStatus } from "../api/types";
 import { Icon, type IconName } from "./Icon";
 import { Hash } from "./components";
 
@@ -73,6 +73,53 @@ export function StageLine({
           >
             <span className="dot" />
             {mini ? null : <span className="name">{t(`stage.${s}` as Key)}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- Hypothesis lifecycle flow (one "intent") ---------- */
+
+type FlowState = "done" | "current" | "pending" | "skipped" | "bad";
+
+// hypothesisFlow derives the lifecycle of one hypothesis: how it travelled from
+// a matched candidate, through the Researcher and Skeptic, to triage, optional
+// lab validation, and an outcome. Each node's state drives the same stage-line
+// visual the run uses, so the path never depends on colour alone.
+function hypothesisFlow(h: Hypothesis): { key: Key; state: FlowState; note: Key }[] {
+  const decided = !["draft", "triage"].includes(h.status);
+  const terminal = ["accepted", "rejected", "validated", "not_reproducible", "duplicate"].includes(h.status);
+  const bad = ["rejected", "not_reproducible", "duplicate"].includes(h.status);
+  const inLab = ["validation_pending", "validated", "not_reproducible"].includes(h.status);
+
+  const skeptic: FlowState = h.skeptic_verdict === "" ? "skipped" : h.skeptic_verdict === "refutes" ? "bad" : "done";
+  const triage: FlowState = decided ? "done" : "current";
+  const lab: FlowState = h.status === "validation_pending" ? "current" : inLab ? "done" : "skipped";
+  const outcome: FlowState = terminal ? (bad ? "bad" : "done") : "pending";
+
+  return [
+    { key: "flow.candidate", state: "done", note: "flow.candidate.note" },
+    { key: "flow.researcher", state: "done", note: "flow.researcher.note" },
+    { key: "flow.skeptic", state: skeptic, note: h.skeptic_verdict ? (`flow.skeptic.${h.skeptic_verdict}` as Key) : "flow.skeptic.skipped" },
+    { key: "flow.triage", state: triage, note: h.auto_triaged ? "flow.triage.auto" : decided ? "flow.triage.human" : "flow.triage.waiting" },
+    { key: "flow.lab", state: lab, note: lab === "skipped" ? "flow.lab.skipped" : "flow.lab.note" },
+    { key: "flow.outcome", state: outcome, note: `status.hypothesis.${h.status}` as Key },
+  ];
+}
+
+export function HypothesisFlow({ h }: { h: Hypothesis }) {
+  const { t } = useI18n();
+  return (
+    <div className="stageline" role="img" aria-label={t("flow.aria")}>
+      {hypothesisFlow(h).map((n) => {
+        const reached = n.state === "done" || n.state === "current" || n.state === "bad";
+        const segment = n.state === "bad" ? "failed" : n.state === "skipped" ? "paused" : undefined;
+        return (
+          <div key={n.key} className="stop" data-reached={reached} data-current={n.state === "current"} data-segment={segment} data-interchange={n.key === "flow.lab"} title={t(n.note)}>
+            <span className="dot" />
+            <span className="name">{t(n.key)}</span>
           </div>
         );
       })}

@@ -27,6 +27,7 @@ const pages: { label: Key; icon: IconName; to: string; admin?: boolean }[] = [
   { label: "nav.analyze", icon: "branch", to: "/analyze" },
   { label: "nav.runs", icon: "runs", to: "/runs" },
   { label: "runs.new", icon: "plus", to: "/runs/new" },
+  { label: "nav.reports", icon: "file", to: "/reports" },
   { label: "nav.findings", icon: "findings", to: "/findings" },
   { label: "nav.projects", icon: "projects", to: "/projects" },
   { label: "nav.patterns", icon: "patterns", to: "/patterns" },

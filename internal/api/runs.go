@@ -119,6 +119,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		LLMProfileID *int64          `json:"llm_profile_id"`
 		Limits       research.Limits `json:"limits"`
 		Auto         bool            `json:"auto"`
+		AutoDiscover bool            `json:"auto_discover"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -155,7 +156,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.store.CreateRun(r.Context(), store.RunInput{
 		ProjectID: in.ProjectID, TargetIDs: in.TargetIDs, PatternIDs: in.PatternIDs,
-		LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Auto,
+		LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Auto, AutoDiscover: in.AutoDiscover,
 	}, principal(r).UserID)
 	if err != nil {
 		s.fail(w, r, err)

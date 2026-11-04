@@ -275,7 +275,7 @@ func (o *Orchestrator) IntakeOnce(ctx context.Context) (bool, error) {
 			ids = append(ids, id)
 		}
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && !in.Options.AutoDiscover {
 		return true, fail(fmt.Sprintf("no security fix was found in the last %d commits, and no existing pattern was chosen; nothing to hunt for", in.Options.HistoryDepth))
 	}
 	settings, err := o.store.ResearchSettings(ctx)
@@ -300,7 +300,7 @@ func (o *Orchestrator) IntakeOnce(ctx context.Context) (bool, error) {
 		by = *in.CreatedBy
 	}
 	run, err := o.store.CreateRun(ctx, store.RunInput{ProjectID: in.ProjectID, TargetIDs: []int64{in.TargetID},
-		PatternIDs: ids, LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Options.Auto}, by)
+		PatternIDs: ids, LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Options.Auto, AutoDiscover: in.Options.AutoDiscover}, by)
 	if err != nil {
 		return true, fail("starting the run: " + err.Error())
 	}

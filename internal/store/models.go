@@ -118,6 +118,7 @@ type Run struct {
 	Status       string          `db:"status" json:"status"`
 	Mode         string          `db:"mode" json:"mode"`
 	Auto         bool            `db:"auto" json:"auto"`
+	AutoDiscover bool            `db:"auto_discover" json:"auto_discover"`
 	Limits       json.RawMessage `db:"limits" json:"limits"`
 	Policy       json.RawMessage `db:"policy" json:"policy"`
 	ScopeHash    string          `db:"scope_hash" json:"scope_hash"`
