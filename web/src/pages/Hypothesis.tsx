@@ -7,7 +7,7 @@ import { Link, navigate, useLocation } from "../router";
 import { useSession } from "../session";
 import type { Approval, Evidence, Experiment, Hypothesis, HypothesisDetail, LabLimits, Project, Run } from "../api/types";
 import { Alert, Button, Drawer, Empty, ErrorNote, errorText, Field, Hash, Panel, Priority, Ref, SkeletonRows, State, Time, useToast } from "../ui/components";
-import { Custody, Excerpt, PolicyList, SectionTitle, type CustodyEntry } from "../ui/domain";
+import { Custody, Excerpt, HypothesisFlow, PolicyList, SectionTitle, type CustodyEntry } from "../ui/domain";
 import { decisionLook, experimentLook, hypothesisLook } from "../ui/status";
 
 export function HypothesisPage({ id }: { id: number }) {
@@ -254,6 +254,12 @@ function Review({
         </div>
         <h1 style={{ maxWidth: "48ch" }}>{h.title}</h1>
       </header>
+
+      <Panel title={t("flow.title")} meta={t("flow.sub")}>
+        <div className="panel-body">
+          <HypothesisFlow h={h} />
+        </div>
+      </Panel>
 
       <div className="review">
         <div className="stack" style={{ gap: 18, minWidth: 0 }}>
