@@ -292,6 +292,7 @@ const en: Record<keyof typeof ko, string> = {
   "run.resumed": "Run resumed. Finished stages are not repeated.",
   "run.cancelled": "Run cancelled.",
   "run.finalized": "Generating the report.",
+  "run.tab.report": "Report",
   "run.tab.hypotheses": "Hypotheses",
   "run.tab.experiments": "Experiments",
   "run.tab.activity": "Activity",
@@ -303,6 +304,8 @@ const en: Record<keyof typeof ko, string> = {
   "run.noActivity": "Nothing recorded yet",
   "run.noArtifacts": "No artifacts",
   "run.noArtifactsBody": "Indexes, analyzer output and reports collect here.",
+  "run.noReport": "No report yet",
+  "run.noReportBody": "A report is written when the run finishes. It will appear here, rendered in full.",
 
   "exp.col.operation": "Operation",
   "exp.col.status": "Result",
