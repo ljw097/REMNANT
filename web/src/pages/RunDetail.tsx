@@ -143,6 +143,7 @@ export function RunDetailPage({ id }: { id: number }) {
           title={project.data?.name ?? t("common.project", { id: r.project_id })}
           state={<>
             <State look={runLook(r.status)} />
+            {r.auto_discover ? <span className="state" data-tone="todo" data-form="solid" title={t("run.discoverNote")}>{t("run.discover")}</span> : null}
             {r.auto ? <span className="state" data-tone="info" data-form="solid" title={t("run.autoNote")}>{t("run.auto")}</span> : null}
           </>}
           actions={actions}

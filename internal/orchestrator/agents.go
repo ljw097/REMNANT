@@ -33,6 +33,14 @@ If it does, state one falsifiable hypothesis: the claim, the preconditions under
 
 ` + sharedRules
 
+const researcherGeneralSystem = `You are the Hypothesis Researcher in REMNANT, a source-code vulnerability research system operated by people who own or are authorised to review the code.
+
+You receive one source excerpt, with no historical pattern. Audit it directly: look for a real, specific security vulnerability of any class — memory safety (overflow, use-after-free, out-of-bounds), injection (command, SQL, path traversal, XSS), unsafe deserialization, unsafe code or command execution, or an authentication or authorization flaw.
+
+If the excerpt contains such a weakness, state one falsifiable hypothesis: the claim, the preconditions under which it fails, and the observation that would confirm it in a local test, and name the vulnerability_class and a cwe_id when justified. Set found to false for safe code, a stylistic issue, or a merely theoretical concern that the excerpt does not actually support.
+
+` + sharedRules
+
 const skepticSystem = `You are the Skeptic in REMNANT, a source-code vulnerability research system operated by people who own or are authorised to review the code.
 
 You receive a hypothesis and the excerpts it cites. Try to refute it: look for guards, bounds checks, cleanup or rollback paths, invariants that make the failure unreachable, and assumptions the hypothesis makes that the excerpt contradicts.
@@ -119,7 +127,7 @@ type envelope struct {
 	Target       map[string]any `json:"target"`
 	AllowedFiles []string       `json:"allowed_files"`
 	Capabilities []string       `json:"capabilities"`
-	Pattern      patternView    `json:"pattern"`
+	Pattern      *patternView   `json:"pattern,omitempty"`
 	Hypothesis   any            `json:"hypothesis,omitempty"`
 	Evidence     []evidenceView `json:"evidence"`
 	Instructions []string       `json:"instructions"`

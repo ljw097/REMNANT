@@ -119,6 +119,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		LLMProfileID *int64          `json:"llm_profile_id"`
 		Limits       research.Limits `json:"limits"`
 		Auto         bool            `json:"auto"`
+		AutoDiscover bool            `json:"auto_discover"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -149,13 +150,15 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		countErr = badRequest("target_ids must contain 1–10 targets")
 	case len(in.PatternIDs) > 100:
 		countErr = badRequest("pattern_ids may contain at most 100 patterns")
+	case len(in.PatternIDs) == 0 && !in.AutoDiscover:
+		countErr = badRequest("give at least one pattern, or set auto_discover for a general (patternless) audit")
 	}
 	if !validate(w, countErr, limitErr) {
 		return
 	}
 	run, err := s.store.CreateRun(r.Context(), store.RunInput{
 		ProjectID: in.ProjectID, TargetIDs: in.TargetIDs, PatternIDs: in.PatternIDs,
-		LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Auto,
+		LLMProfileID: in.LLMProfileID, Limits: limits, Auto: in.Auto, AutoDiscover: in.AutoDiscover,
 	}, principal(r).UserID)
 	if err != nil {
 		s.fail(w, r, err)

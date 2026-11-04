@@ -37,10 +37,13 @@ type IntakeOptions struct {
 	// Auto runs the hunt on autopilot: it triages its own hypotheses and
 	// finalises a report without a person.
 	Auto bool `json:"auto"`
+	// AutoDiscover also audits the source directly (general mode), so the hunt
+	// finds vulnerabilities even when history yields no pattern.
+	AutoDiscover bool `json:"auto_discover"`
 }
 
 func DefaultIntakeOptions() IntakeOptions {
-	return IntakeOptions{MineHistory: true, HistoryDepth: 500, MaxCommits: 12, MaxPatterns: 8, MaxTokens: 150000, IncludePatterns: []int64{}, Auto: true}
+	return IntakeOptions{MineHistory: true, HistoryDepth: 500, MaxCommits: 12, MaxPatterns: 8, MaxTokens: 150000, IncludePatterns: []int64{}, Auto: true, AutoDiscover: true}
 }
 
 // Normalize fills zero fields with defaults and checks ranges.

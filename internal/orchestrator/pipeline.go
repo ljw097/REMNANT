@@ -220,6 +220,11 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 			patterns = append(patterns, compiled{p, sigs, counterSignaturesOf(p)})
 		}
 	}
+	// General mode: audit the source directly, with no historical pattern.
+	if scope.Run.AutoDiscover {
+		gp := generalPattern()
+		patterns = append(patterns, compiled{gp, signaturesOf(gp), nil})
+	}
 	if len(patterns) == 0 {
 		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", nil)
 		return nil
@@ -267,7 +272,12 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 	cands := selectCandidates(perPattern, j.settings.MaxCandidates)
 	for i := range cands {
 		c := &cands[i]
-		summary := fmt.Sprintf("Region matches signature(s) %s of pattern %d", strings.Join(c.Matched, ", "), c.Pattern.ID)
+		var summary string
+		if c.Pattern.ID == generalPatternID {
+			summary = fmt.Sprintf("Region selected for general audit; contains %s", strings.Join(c.Matched, ", "))
+		} else {
+			summary = fmt.Sprintf("Region matches signature(s) %s of pattern %d", strings.Join(c.Matched, ", "), c.Pattern.ID)
+		}
 		if len(c.Countered) > 0 {
 			summary += fmt.Sprintf("; also matches counter-signature(s) %s", strings.Join(c.Countered, ", "))
 		}
@@ -393,6 +403,9 @@ func (j *job) pendingWork(ctx context.Context, scope store.WorkScope) ([]workIte
 	patterns := map[int64]store.Pattern{}
 	for _, p := range scope.Patterns {
 		patterns[p.ID] = p
+	}
+	if scope.Run.AutoDiscover {
+		patterns[generalPatternID] = generalPattern()
 	}
 	byID := map[int64]candidate{}
 	var items []workItem
@@ -520,16 +533,25 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	c := it.c
 	ev := evidenceView{c.evidenceID, c.Chunk.Path, c.Chunk.Start, c.Chunk.End, c.Chunk.Symbol, c.SHA256, c.Excerpt}
 	allowed := map[int64]evidenceView{ev.EvidenceID: ev}
+	general := c.Pattern.ID == generalPatternID
 	env := envelope{
 		TaskID:       fmt.Sprintf("run-%d/evidence-%d", j.runID, c.evidenceID),
 		Target:       map[string]any{"target_id": c.TargetID, "revision": c.Revision, "language": c.Chunk.Language},
 		Capabilities: []string{"source.read", "evidence.read"},
-		Pattern:      viewPattern(c.Pattern),
 		Evidence:     []evidenceView{ev},
-		Instructions: []string{
+	}
+	if general {
+		env.Instructions = []string{
+			"No historical pattern applies: audit this region directly for a real security vulnerability of any class (memory safety, injection, path traversal, deserialization, authentication or authorization flaws, unsafe command or code execution, and so on).",
+			"Set found to true only for a specific, falsifiable weakness in this code — not a style note or a theoretical concern.",
+		}
+	} else {
+		pv := viewPattern(c.Pattern)
+		env.Pattern = &pv
+		env.Instructions = []string{
 			"Decide whether this region plausibly contains the pattern's root cause.",
 			fmt.Sprintf("The region matched signature(s): %s.", strings.Join(c.Matched, ", ")),
-		},
+		}
 	}
 
 	var hypID int64
@@ -544,7 +566,11 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 			"triage_confidence": d.TriageConfidence,
 		}
 	} else {
-		raw, err := j.call(ctx, researcher, b, researcher.system(researcherSystem), env, researcherSchema)
+		sys := researcherSystem
+		if general {
+			sys = researcherGeneralSystem
+		}
+		raw, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema)
 		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
 			if kind == "refused" {
 				j.mark(ctx, c, "refused")
@@ -565,10 +591,14 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 			return
 		}
 		patternID := c.Pattern.ID
+		var patternRef *int64 // general-mode hypotheses have no originating pattern
+		if !general {
+			patternRef = &patternID
+		}
 		dedupe := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%s|%d", c.TargetID, patternID, c.Chunk.Path, c.Chunk.Symbol, c.Chunk.Start)))
 		// InsertHypothesis also marks the candidate, in the same transaction.
 		hypID, err = j.o.store.InsertHypothesis(ctx, j.runID, store.HypothesisInput{
-			TargetID: c.TargetID, PatternID: &patternID, Title: out.Title, Claim: out.Claim,
+			TargetID: c.TargetID, PatternID: patternRef, Title: out.Title, Claim: out.Claim,
 			VulnerabilityClass: out.VulnerabilityClass, CWEID: out.CWEID, Facts: out.Facts,
 			Preconditions: out.Preconditions, Unknowns: out.Unknowns, AffectedSymbols: out.AffectedSymbols,
 			ExpectedObservation: out.ExpectedObservation, CounterEvidence: out.CounterEvidenceToCheck,

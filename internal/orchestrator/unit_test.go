@@ -37,6 +37,24 @@ func TestScoreAndTopK(t *testing.T) {
 	}
 }
 
+func TestGeneralPattern(t *testing.T) {
+	p := generalPattern()
+	if p.ID != generalPatternID {
+		t.Fatalf("general pattern id = %d", p.ID)
+	}
+	sigs := signaturesOf(p)
+	if len(sigs) == 0 {
+		t.Fatal("general pattern has no signatures")
+	}
+	// A classic sink is selected; benign code is not (no signature hit).
+	if _, _, _, ok := score("char buf[8]; strcpy(buf, input);", sigs, nil); !ok {
+		t.Error("general audit missed a strcpy sink")
+	}
+	if _, _, _, ok := score("int add(int a, int b) { return a + b; }", sigs, nil); ok {
+		t.Error("general audit selected benign arithmetic")
+	}
+}
+
 func TestNumberedExcerpt(t *testing.T) {
 	lines := []string{"a", "b", "c"}
 	ex, sum := numbered(lines, 2, 3)

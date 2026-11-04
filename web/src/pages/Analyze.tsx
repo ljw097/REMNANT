@@ -92,7 +92,7 @@ function IntakeForm({ cfg }: { cfg: IntakeConfig }) {
   }, [profiles.data]);
   const set = (p: Partial<IntakeOptions>) => setOpts((o) => ({ ...o, ...p }));
   const usable = (patterns.data ?? []).filter((p) => p.validation_status !== "rejected");
-  const ok = url.trim().length > 3 && (opts.mine_history || opts.include_patterns.length > 0) && (profileID || projectID);
+  const ok = url.trim().length > 3 && (opts.mine_history || opts.include_patterns.length > 0 || opts.auto_discover) && (profileID || projectID);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,6 +154,13 @@ function IntakeForm({ cfg }: { cfg: IntakeConfig }) {
           <span>
             <strong>{t("analyze.mine")}</strong>
             <span className="small ink-2">{t("analyze.mineHint")}</span>
+          </span>
+        </label>
+        <label className="rule" style={{ border: "1px solid var(--rule)", borderRadius: 6 }}>
+          <input type="checkbox" checked={opts.auto_discover} onChange={(e) => set({ auto_discover: e.target.checked })} />
+          <span>
+            <strong>{t("analyze.discover")}</strong>
+            <span className="small ink-2">{t("analyze.discoverHint")}</span>
           </span>
         </label>
         <label className="rule" style={{ border: "1px solid var(--rule)", borderRadius: 6 }}>

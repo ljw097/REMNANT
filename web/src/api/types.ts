@@ -134,6 +134,7 @@ export interface Run {
   policy: Policy;
   scope_hash: string;
   auto: boolean;
+  auto_discover: boolean;
   llm_profile_id: number | null;
   started_by: number | null;
   error_summary: string;
@@ -418,6 +419,7 @@ export interface UserRef {
 
 export interface IntakeOptions {
   auto: boolean;
+  auto_discover: boolean;
   mine_history: boolean;
   history_depth: number;
   max_commits: number;

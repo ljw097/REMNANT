@@ -26,6 +26,7 @@ export function NewRunPage() {
   const [wall, setWall] = useState(900);
   const [tokens, setTokens] = useState(200000);
   const [auto, setAuto] = useState(false);
+  const [autoDiscover, setAutoDiscover] = useState(false);
   // Start from the instance's run defaults (Settings → Expert settings).
   const research = useApi<ResearchSettingsResponse>("/settings/research");
   useEffect(() => {
@@ -62,8 +63,9 @@ export function NewRunPage() {
     if (targetIds.length === 0) out.push(t("newRun.need.target"));
     if (!profile) out.push(t("newRun.need.profile"));
     else if (!profile.has_api_key) out.push(t("newRun.need.key"));
+    if (patternIds.length === 0 && !autoDiscover) out.push(t("newRun.need.patternOrDiscover"));
     return out;
-  }, [project, targetIds, profile, t]);
+  }, [project, targetIds, profile, patternIds, autoDiscover, t]);
 
   const submit = async () => {
     if (!project || problems.length) return;
@@ -77,6 +79,7 @@ export function NewRunPage() {
         llm_profile_id: profileId === "" ? undefined : profileId,
         limits: { max_workers: workers, wall_seconds: wall, max_tokens: tokens },
         auto,
+        auto_discover: autoDiscover,
       });
       navigate(`/runs/${run.id}`);
     } catch (e) {
@@ -219,6 +222,13 @@ export function NewRunPage() {
               <Field label={t("newRun.tokens")} hint={t("newRun.tokensHint")}>
                 {(id) => <input id={id} className="input" type="number" min={4000} max={2000000} step={10000} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 200000)} />}
               </Field>
+              <label className="rule" style={{ gridColumn: "1 / -1", border: "1px solid var(--rule)", borderRadius: 6 }}>
+                <input type="checkbox" checked={autoDiscover} onChange={(e) => setAutoDiscover(e.target.checked)} />
+                <span>
+                  <strong>{t("newRun.discover")}</strong>
+                  <span className="small ink-2">{t("newRun.discoverHint")}</span>
+                </span>
+              </label>
               <label className="rule" style={{ gridColumn: "1 / -1", border: "1px solid var(--rule)", borderRadius: 6 }}>
                 <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
                 <span>

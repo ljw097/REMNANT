@@ -977,6 +977,7 @@ components:
         llm_profile_id: { type: integer, format: int64, description: Defaults to the project's profile }
         limits: { $ref: '#/components/schemas/Limits' }
         auto: { type: boolean, default: false, description: Run on autopilot (triage and report without a person; lab experiments still need approval) }
+        auto_discover: { type: boolean, default: false, description: General mode — audit the source directly for vulnerabilities of any class, with no pattern. Required when pattern_ids is empty. }
     Run:
       type: object
       properties:
@@ -988,6 +989,7 @@ components:
         policy: { $ref: '#/components/schemas/Policy' }
         scope_hash: { type: string }
         auto: { type: boolean, description: Autopilot — triages its own hypotheses and finalises the report without a person }
+        auto_discover: { type: boolean, description: General mode — audited the source directly for vulnerabilities of any class }
         llm_profile_id: { type: [integer, 'null'] }
         started_by: { type: [integer, 'null'] }
         error_summary: { type: string }
@@ -1231,6 +1233,7 @@ components:
       type: object
       properties:
         auto: { type: boolean, default: true, description: Autopilot — triage hypotheses and write the report without a person }
+        auto_discover: { type: boolean, default: true, description: General mode — also audit the source directly so the hunt finds vulnerabilities even without a mined pattern }
         mine_history: { type: boolean, default: true }
         history_depth: { type: integer, minimum: 10, maximum: 5000, default: 500 }
         max_commits: { type: integer, minimum: 1, maximum: 40, default: 12, description: Fix candidates the Historian reads }
