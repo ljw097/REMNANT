@@ -814,3 +814,13 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 a.ref { transition: color 0.1s ease, background 0.1s ease; }
 a.ref:hover { color: var(--accent); background: color-mix(in oklch, var(--accent) 13%, var(--surface)); text-decoration: underline; text-underline-offset: 2px; }
 :root[data-theme="dark"] a.ref:hover, :root:not([data-theme="light"]) a.ref:hover { color: var(--info); background: color-mix(in oklch, var(--info) 15%, var(--surface)); }
+
+/* Rendered report as a reading document: a padded card with a balanced,
+   centered measure so the text never hugs the panel edge. */
+.report-doc { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-card); padding: 34px clamp(22px, 4vw, 48px); }
+.report-doc .md { max-width: 68ch; margin: 0 auto; }
+.report-dl { position: absolute; top: 14px; right: 14px; }
+@media (max-width: 680px) {
+  .report-doc { padding: 20px 18px; }
+  .report-dl { position: static; display: inline-flex; margin: 0 0 14px auto; }
+}
