@@ -41,7 +41,7 @@ export function ReportView({ runId }: { runId: number }) {
         </Button>
       }
     >
-      {failed ? <ErrorNote error={t("art.unavailable")} /> : md == null ? <SkeletonRows rows={6} cols={1} /> : <Markdown source={md} />}
+      {failed ? <ErrorNote error={t("art.unavailable")} /> : md == null ? <SkeletonRows rows={6} cols={1} /> : <Markdown source={md} refs />}
     </Panel>
   );
 }
