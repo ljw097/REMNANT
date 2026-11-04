@@ -774,12 +774,17 @@ input[type="color"].swatch { padding: 2px; background: var(--surface); cursor: p
 .md-table { margin: 0; }
 .md .table-wrap { margin: 0.9em 0; }
 
-/* Reports page: the finished-run list beside the rendered report. */
-.report-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.report-row { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; text-align: left; color: inherit; font: inherit; }
+/* Reports page: a compact finished-run rail beside the rendered report. */
+.reports-rail { position: sticky; top: 64px; align-self: start; }
+.reports-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 2px; }
+.reports-head h2 { margin: 0; }
+.report-list { list-style: none; margin: 0; padding: 5px; display: flex; flex-direction: column; gap: 2px; }
+.report-row { width: 100%; display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; text-align: left; color: inherit; font: inherit; }
 .report-row:hover { background: var(--panel-hover); }
-.report-row[aria-current="true"] { background: var(--panel); box-shadow: inset 2px 0 0 var(--primary); }
-.report-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.report-row[aria-current="true"] { background: var(--panel); box-shadow: inset 2px 0 0 var(--accent); }
+.report-row-name { font-weight: 600; font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-row-meta { display: flex; align-items: center; gap: 8px; font-size: var(--fs-0); color: var(--ink-3); }
+.report-row-meta .spacer { flex: 1 1 auto; }
 
 /* Historical "guards present" note shown beside a flagged excerpt. */
 .guard-note { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--rule)); color: var(--ink-2); }
