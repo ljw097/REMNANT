@@ -365,6 +365,7 @@ export interface SystemConfig {
   static_operations: string[];
   lab_operations: string[];
   repo_hosts: string[] | null;
+  advisory_feed: string;
   auto_update: "off" | "check" | "install";
   update_interval: string;
   update_repo: string;

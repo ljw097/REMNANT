@@ -848,6 +848,7 @@ const ko = {
   "server.lab": "랩 작업",
   "server.none": "없음",
   "server.repoHosts": "허용된 저장소 호스트",
+  "server.advisoryFeed": "취약점 피드",
   "server.repoHostsNone": "없음 — 원격 저장소 비활성",
   "server.updates": "자동 업데이트",
   "server.update.off": "꺼짐",

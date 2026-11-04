@@ -128,6 +128,11 @@ add `-password-stdin` to set your own).
    like security fixes, has the **Historian** draft root-cause patterns from
    them, and starts a run that hunts for the same mistakes in the current code.
    With autopilot it triages the hypotheses and writes the report by itself.
+   When the advisory feed is on (the default once repository hosts are set), it
+   also asks OSV for the project's published advisories and pulls in the exact
+   commits that fixed known CVEs — even "silent" fixes whose message named no
+   CVE. The feed is contacted only during intake, only over https, and can be
+   turned off with `REMNANT_ADVISORY_FEED=off`.
 
 ### Manually
 
@@ -199,6 +204,8 @@ Server settings come from the environment (a restart applies them):
 | `REMNANT_DATA_DIR` | `data` | snapshots, artifacts, update staging, the key file |
 | `REMNANT_LISTEN` | `127.0.0.1:8080` | address to serve on |
 | `REMNANT_REPO_HOSTS` | — (off) | comma-separated hosts allowed for repository fetch/analysis |
+| `REMNANT_ADVISORY_FEED` | `osv` when repo hosts are set, else `off` | external vulnerability feed used during intake to find known CVE patches: `off` or `osv` |
+| `REMNANT_ADVISORY_API` | `https://api.osv.dev` | base URL of the advisory feed (OSV) |
 | `REMNANT_WORKER` | `off` | `bwrap` enables the sandboxed worker (static analysis + lab) |
 | `REMNANT_AUTO_UPDATE` | `check` | `off`, `check`, or `install` |
 

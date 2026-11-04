@@ -276,6 +276,7 @@ func (s *Server) systemConfig(w http.ResponseWriter, r *http.Request) {
 		"static_operations":        c.StaticOperations,
 		"lab_operations":           lab,
 		"repo_hosts":               c.RepoHosts,
+		"advisory_feed":            c.AdvisoryFeed,
 		"auto_update":              c.AutoUpdate,
 		"update_interval":          c.UpdateInterval.String(),
 		"update_repo":              c.UpdateRepo,
