@@ -40,6 +40,11 @@ type Config struct {
 	WorkerAllowNoCgroup bool     // REMNANT_WORKER_ALLOW_NO_CGROUP=1 accepts running without cgroup limits
 	StaticOperations    []string // REMNANT_STATIC_OPERATIONS, default static.patterns,static.semgrep
 
+	// AdvisoryFeed is the external vulnerability feed queried during repository
+	// intake to find known CVE patches: "" / "off" disables it, "osv" uses OSV.
+	AdvisoryFeed string // REMNANT_ADVISORY_FEED
+	AdvisoryAPI  string // REMNANT_ADVISORY_API, default https://api.osv.dev
+
 	AutoUpdate     string        // REMNANT_AUTO_UPDATE: off | check (default) | install
 	UpdateInterval time.Duration // REMNANT_UPDATE_INTERVAL, default 6h, at least 10m
 	UpdateRepo     string        // REMNANT_UPDATE_REPO, default ljw097/REMNANT
@@ -160,6 +165,23 @@ func Load(getenv func(string) string) (Config, error) {
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
 			cfg.RepoHosts = append(cfg.RepoHosts, h)
 		}
+	}
+
+	// The advisory feed defaults on (OSV) once remote repositories are enabled,
+	// since it only matters for repository intake; "off" turns it off.
+	cfg.AdvisoryFeed = strings.ToLower(strings.TrimSpace(getenv("REMNANT_ADVISORY_FEED")))
+	if cfg.AdvisoryFeed == "" {
+		if len(cfg.RepoHosts) > 0 {
+			cfg.AdvisoryFeed = "osv"
+		} else {
+			cfg.AdvisoryFeed = "off"
+		}
+	}
+	if cfg.AdvisoryFeed != "off" && cfg.AdvisoryFeed != "osv" {
+		return Config{}, fmt.Errorf("REMNANT_ADVISORY_FEED must be off or osv")
+	}
+	if cfg.AdvisoryAPI = getenv("REMNANT_ADVISORY_API"); cfg.AdvisoryAPI == "" {
+		cfg.AdvisoryAPI = "https://api.osv.dev"
 	}
 	return cfg, nil
 }

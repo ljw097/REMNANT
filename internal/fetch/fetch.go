@@ -34,6 +34,9 @@ type Fetcher struct {
 	// GitConfig adds "-c" settings; tests use it to redirect URLs to local
 	// repositories.
 	GitConfig []string
+	// AdvisoryLookup, when set, enriches the history with external-advisory
+	// fix commits (known CVE patches). It is best-effort: an error is ignored.
+	AdvisoryLookup AdvisoryLookup
 }
 
 var refRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
@@ -163,6 +166,13 @@ func (f *Fetcher) FetchHistory(ctx context.Context, sourceURI, ref, key string, 
 	if historyDepth > 0 {
 		if history, err = readHistory(ctx, git, work, historyDepth); err != nil {
 			return fail(fmt.Errorf("reading history: %w", err))
+		}
+		// Fold in known published advisories (e.g. CVE patches) whose fixing
+		// commit the message heuristic would miss. Best-effort: never fatal.
+		if f.AdvisoryLookup != nil {
+			if notes, aerr := f.AdvisoryLookup(ctx, canonical, work, git); aerr == nil {
+				history = mergeAdvisories(ctx, git, work, history, notes)
+			}
 		}
 	}
 	if err := os.RemoveAll(filepath.Join(work, ".git")); err != nil {

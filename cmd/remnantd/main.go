@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ljw097/remnant/internal/advisory"
 	"github.com/ljw097/remnant/internal/api"
 	"github.com/ljw097/remnant/internal/auth"
 	"github.com/ljw097/remnant/internal/buildinfo"
@@ -274,7 +275,11 @@ func serve(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Co
 	if cfg.Orchestrator {
 		opts := orchestrator.Options{Concurrency: cfg.OrchestratorConcurrency, StaticOperations: []string{}}
 		if len(cfg.RepoHosts) > 0 {
-			opts.Fetcher = &fetch.Fetcher{SnapshotDir: cfg.SnapshotDir(), AllowedHosts: cfg.RepoHosts}
+			f := &fetch.Fetcher{SnapshotDir: cfg.SnapshotDir(), AllowedHosts: cfg.RepoHosts}
+			if cfg.AdvisoryFeed == "osv" {
+				f.AdvisoryLookup = advisoryLookup(advisory.NewClient(cfg.AdvisoryAPI), log)
+			}
+			opts.Fetcher = f
 		}
 		if cfg.Worker == "bwrap" {
 			sup, ops, err := startWorker(ctx, log, st, cfg)
@@ -390,4 +395,39 @@ func createToken(ctx context.Context, st *store.Store, args []string) error {
 	}
 	fmt.Println(token)
 	return nil
+}
+
+// advisoryLookup adapts an OSV client to the fetch hook: it infers the
+// repository's packages from the clone, asks the feed for their advisories,
+// and returns the fixing commits by SHA. It is best-effort — any error is
+// logged and yields no enrichment, never a failed fetch.
+func advisoryLookup(c *advisory.Client, log *slog.Logger) fetch.AdvisoryLookup {
+	return func(ctx context.Context, repoURL, work string, _ func(...string) (string, error)) (map[string]fetch.AdvisoryNote, error) {
+		pkgs := advisory.InferPackages(work)
+		if len(pkgs) == 0 {
+			return nil, nil
+		}
+		notes := map[string]fetch.AdvisoryNote{}
+		for _, p := range pkgs {
+			advs, err := c.ForPackage(ctx, p.Ecosystem, p.Name)
+			if err != nil {
+				log.Warn("advisory feed lookup failed", "repo", repoURL, "ecosystem", p.Ecosystem, "package", p.Name, "err", err)
+				continue
+			}
+			for _, a := range advs {
+				for _, sha := range a.FixedCommits {
+					n := notes[sha]
+					n.IDs = append(n.IDs, a.CVE())
+					if n.Summary == "" {
+						n.Summary = a.Summary
+					}
+					notes[sha] = n
+				}
+			}
+		}
+		if len(notes) > 0 {
+			log.Info("advisory feed enriched intake", "repo", repoURL, "fix_commits", len(notes))
+		}
+		return notes, nil
+	}
 }

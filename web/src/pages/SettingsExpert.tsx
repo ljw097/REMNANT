@@ -573,6 +573,7 @@ export function ServerConfigPanel() {
         ["server.static", c.static_operations.length ? <span className="mono">{c.static_operations.join(", ")}</span> : t("server.none")],
         ["server.lab", <span className="mono">{c.lab_operations.join(", ")}</span>],
         ["server.repoHosts", c.repo_hosts?.length ? <span className="mono">{c.repo_hosts.join(", ")}</span> : t("server.repoHostsNone")],
+        ["server.advisoryFeed", c.advisory_feed && c.advisory_feed !== "off" ? <span className="mono">{c.advisory_feed.toUpperCase()}</span> : t("server.off")],
         ["server.updates", `${t(`server.update.${c.auto_update}` as Key)} · ${c.update_interval} · ${c.update_repo}`],
       ]
     : [];

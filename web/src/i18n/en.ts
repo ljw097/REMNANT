@@ -848,6 +848,7 @@ const en: Record<keyof typeof ko, string> = {
   "server.lab": "Lab operations",
   "server.none": "None",
   "server.repoHosts": "Allowed repository hosts",
+  "server.advisoryFeed": "Advisory feed",
   "server.repoHostsNone": "None — remote repositories are off",
   "server.updates": "Automatic updates",
   "server.update.off": "Off",
