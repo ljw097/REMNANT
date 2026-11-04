@@ -179,8 +179,8 @@ func (l Limits) Normalize() (Limits, error) {
 	switch {
 	case l.MaxWorkers < 1 || l.MaxWorkers > 4:
 		return l, fmt.Errorf("max_workers must be 1–4")
-	case l.WallSeconds < 60 || l.WallSeconds > 3600:
-		return l, fmt.Errorf("wall_seconds must be 60–3600")
+	case l.WallSeconds < 60 || l.WallSeconds > 86400:
+		return l, fmt.Errorf("wall_seconds must be 60 to 86400")
 	case l.MaxTokens < 4000 || l.MaxTokens > 2000000:
 		return l, fmt.Errorf("max_tokens must be 4000–2000000")
 	}

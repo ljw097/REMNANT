@@ -217,7 +217,7 @@ export function NewRunPage() {
                 {(id) => <input id={id} className="input" type="number" min={1} max={4} value={workers} onChange={(e) => setWorkers(Math.min(4, Math.max(1, Number(e.target.value) || 1)))} />}
               </Field>
               <Field label={t("newRun.wall")} hint={t("newRun.wallHint")}>
-                {(id) => <input id={id} className="input" type="number" min={60} max={3600} step={60} value={wall} onChange={(e) => setWall(Number(e.target.value) || 900)} />}
+                {(id) => <input id={id} className="input" type="number" min={60} max={86400} step={60} value={wall} onChange={(e) => setWall(Number(e.target.value) || 900)} />}
               </Field>
               <Field label={t("newRun.tokens")} hint={t("newRun.tokensHint")}>
                 {(id) => <input id={id} className="input" type="number" min={4000} max={2000000} step={10000} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 200000)} />}

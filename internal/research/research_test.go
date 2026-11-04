@@ -53,7 +53,7 @@ func TestLimitsNormalize(t *testing.T) {
 	if err != nil || l != (Limits{2, 900, 200000}) {
 		t.Fatalf("defaults = %+v, %v", l, err)
 	}
-	for _, bad := range []Limits{{MaxWorkers: 5}, {WallSeconds: 30}, {MaxTokens: 3000}, {MaxTokens: 3000000}, {MaxWorkers: -1}} {
+	for _, bad := range []Limits{{MaxWorkers: 5}, {WallSeconds: 30}, {WallSeconds: 90000}, {MaxTokens: 3000}, {MaxTokens: 3000000}, {MaxWorkers: -1}} {
 		if _, err := bad.Normalize(); err == nil {
 			t.Errorf("%+v accepted", bad)
 		}
