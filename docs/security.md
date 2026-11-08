@@ -45,6 +45,8 @@ The web UI is served with a strict Content-Security-Policy (same-origin scripts,
 - A git target's revision is its commit SHA; its tree digest is recorded too, and every run and worker request re-hashes the checkout against it.
 - Repository text, comments and embedded prompts are untrusted data for agents (see `agent-contracts.md`).
 
+- Deletion keeps the record honest: a target that any run used cannot be deleted (runs keep their evidence pinned to it); a run can be deleted only once finished and never when it has lab approvals, which are the audit trail of code allowed to execute; a pattern a run used cannot be deleted and a reviewed pattern cannot be edited. Re-pinning a target is refused while a run still reads its tree. Deleting a Git target removes the snapshot REMNANT fetched; local snapshot folders are never removed. Deleting a run removes its artifact files.
+
 ## Repository history (intake)
 
 - An intake fetches only from hosts in `REMNANT_REPO_HOSTS`, through the same fetcher as other git targets: https only, no redirects, credentials, hooks or submodules, the connection pinned to a public address checked before fetching, and a size limit. With remote repositories off, the intake API refuses with `source_policy`.

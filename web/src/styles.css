@@ -890,3 +890,4 @@ button.statcard { font: inherit; text-align: left; cursor: pointer; }
 .detail-table th, .detail-table td.num { white-space: nowrap; }
 .detail-table .detail-subject { max-width: 260px; }
 .detail-table .detail-result { max-width: 300px; }
+.table .actions-col { width: 1%; white-space: nowrap; text-align: right; }

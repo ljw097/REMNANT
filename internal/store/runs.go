@@ -59,6 +59,9 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput, startedBy int64) (Ru
 			return fmt.Errorf("%w: every target must belong to the project and be ready", ErrInvalid)
 		}
 
+		if len(in.PatternIDs) == 0 && !in.AutoDiscover {
+			return fmt.Errorf("%w: choose at least one pattern or turn on general discovery", ErrInvalid)
+		}
 		var usable int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM patterns WHERE id = ANY($1) AND validation_status <> 'rejected'`,
@@ -91,7 +94,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput, startedBy int64) (Ru
 		for i, t := range targets {
 			revs[i] = policy.TargetRevision{TargetID: t.TargetID, Revision: t.Revision}
 		}
-		scopeHash, err := policy.RunScope{Policy: pol, Targets: revs, Patterns: in.PatternIDs, Limits: in.Limits}.Hash()
+		scopeHash, err := policy.RunScope{Policy: pol, Targets: revs, Patterns: in.PatternIDs, GeneralDiscovery: in.AutoDiscover, Limits: in.Limits}.Hash()
 		if err != nil {
 			return err
 		}

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/ljw097/remnant/internal/policy"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const projectSelect = `
@@ -92,15 +94,29 @@ type TargetInput struct {
 	HistoryDepth int
 }
 
+// CreateTarget adds a target to a project that is not archived (an archived
+// project is read-only: it takes neither targets nor runs).
 func (s *Store) CreateTarget(ctx context.Context, projectID int64, in TargetInput) (Target, error) {
-	t, err := one[Target](s.pool.Query(ctx, `
-		INSERT INTO targets(project_id, kind, display_name, source_uri, source_ref, snapshot_key,
-		                    revision, tree_sha256, primary_language, status, history_depth)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		RETURNING `+targetCols,
-		projectID, in.Kind, in.DisplayName, in.SourceURI, in.SourceRef, in.SnapshotKey,
-		in.Revision, in.TreeSHA256, in.PrimaryLanguage, in.Status, in.HistoryDepth))
-	return t, mapErr(err)
+	var t Target
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var status string
+		if err := tx.QueryRow(ctx, `SELECT status FROM projects WHERE id = $1 FOR SHARE`, projectID).Scan(&status); err != nil {
+			return mapErr(err)
+		}
+		if status == "archived" {
+			return fmt.Errorf("%w: project is archived", ErrConflict)
+		}
+		var err error
+		t, err = one[Target](tx.Query(ctx, `
+			INSERT INTO targets(project_id, kind, display_name, source_uri, source_ref, snapshot_key,
+			                    revision, tree_sha256, primary_language, status, history_depth)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			RETURNING `+targetCols,
+			projectID, in.Kind, in.DisplayName, in.SourceURI, in.SourceRef, in.SnapshotKey,
+			in.Revision, in.TreeSHA256, in.PrimaryLanguage, in.Status, in.HistoryDepth))
+		return err
+	})
+	return t, err
 }
 
 func (s *Store) ListTargets(ctx context.Context, projectID int64) ([]Target, error) {

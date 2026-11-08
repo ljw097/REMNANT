@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Frame } from "../App";
-import { download, post } from "../api/client";
+import { del, download, post } from "../api/client";
 import { streamRunEvents } from "../api/sse";
 import { useApi, type Query } from "../hooks";
 import { useI18n, type Key } from "../i18n";
@@ -98,6 +98,21 @@ export function RunDetailPage({ id }: { id: number }) {
     }
   };
 
+  // Deleting removes the run's hypotheses, evidence, artifacts and LLM records;
+  // the server refuses a run with lab approvals (they are the audit trail).
+  const removeRun = async () => {
+    setBusy("delete");
+    try {
+      await del(`/runs/${id}`);
+      toast(t("run.deleted", { id }));
+      reloadSummary();
+      navigate("/runs");
+    } catch (e) {
+      toast(errorText(e, t), "bad");
+      setBusy(undefined);
+    }
+  };
+
   if (run.error) {
     return (
       <Frame crumbs={[{ label: t("nav.runs"), to: "/runs" }, { label: t("runs.runN", { id }) }]}>
@@ -138,6 +153,11 @@ export function RunDetailPage({ id }: { id: number }) {
       {!terminalRun(r.status) && can("researcher") ? (
         <ConfirmButton icon="stop" confirmLabel={t("run.cancelConfirm")} loading={busy === "cancel"} onConfirm={() => act("cancel", `/runs/${id}/cancel`, "run.cancelled")}>
           {t("run.cancel")}
+        </ConfirmButton>
+      ) : null}
+      {terminalRun(r.status) && can("researcher") ? (
+        <ConfirmButton variant="ghost" icon="x" confirmLabel={t("run.deleteConfirm")} loading={busy === "delete"} onConfirm={() => void removeRun()}>
+          {t("common.delete")}
         </ConfirmButton>
       ) : null}
     </>
