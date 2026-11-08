@@ -31,7 +31,8 @@ var genericSignatures = []string{
 	// Injection sinks.
 	"innerHTML", "dangerouslySetInnerHTML", "document.write", "mysql_query", "mysqli_query", "executeQuery",
 	// Path / file handling with external names.
-	"fopen", "readFile", "include", "require_once", "LoadLibrary",
+	// (Not a bare "include": as a word it matches every C #include line.)
+	"fopen", "readFile", "include(", "include_once", "require_once", "LoadLibrary",
 	// Crypto / randomness misuse hints.
 	"md5", "mt_rand", "strcmp",
 }

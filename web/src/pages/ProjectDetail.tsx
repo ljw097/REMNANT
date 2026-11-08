@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Frame } from "../App";
-import { patch, post } from "../api/client";
+import { del, patch, post } from "../api/client";
 import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Link } from "../router";
@@ -22,6 +22,7 @@ export function ProjectDetailPage({ id }: { id: number }) {
   const profiles = useApi<LLMProfile[]>("/llm-profiles");
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [editTarget, setEditTarget] = useState<Target | null>(null);
 
   if (p.error) return <Frame crumbs={[{ label: t("nav.projects"), to: "/projects" }, { label: `#${id}` }]}><ErrorNote error={p.error} retry={p.reload} /></Frame>;
   const project = p.data;
@@ -36,6 +37,18 @@ export function ProjectDetailPage({ id }: { id: number }) {
       toast(errorText(e, t), "bad");
     }
   };
+
+  // Target actions show the server's reason when refused (e.g. runs still use it).
+  const targetAction = async (fn: () => Promise<unknown>, done: string) => {
+    try {
+      await fn();
+      targets.reload();
+      toast(done);
+    } catch (e) {
+      toast(errorText(e, t), "bad");
+    }
+  };
+  const manage = can("researcher") && project?.status !== "archived";
 
   return (
     <Frame crumbs={[{ label: t("nav.projects"), to: "/projects" }, { label: project?.name ?? `#${id}` }]}>
@@ -103,6 +116,7 @@ export function ProjectDetailPage({ id }: { id: number }) {
                           <th>{t("targets.col.status")}</th>
                           <th>{t("run.field.revision")}</th>
                           <th>{t("targets.col.lang")}</th>
+                          {manage ? <th className="actions-col" aria-label={t("targets.actions")} /> : null}
                         </tr>
                       </thead>
                       <tbody>
@@ -120,6 +134,35 @@ export function ProjectDetailPage({ id }: { id: number }) {
                             </td>
                             <td>{x.revision ? <Hash value={x.revision} /> : <span className="muted small">{t("targets.awaitingPin")}</span>}</td>
                             <td className="small">{x.primary_language || "—"}</td>
+                            {manage ? (
+                              <td className="actions-col">
+                                <span className="row" style={{ flexWrap: "nowrap", gap: 2 }}>
+                                  <Button size="sm" variant="ghost" iconOnly icon="sliders" title={t("targets.edit")} aria-label={t("targets.edit")} onClick={() => setEditTarget(x)} />
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    iconOnly
+                                    icon="refresh"
+                                    disabled={x.status === "pending"}
+                                    title={x.kind === "git_repository" ? t("targets.refetch") : t("targets.rehash")}
+                                    aria-label={x.kind === "git_repository" ? t("targets.refetch") : t("targets.rehash")}
+                                    onClick={() => void targetAction(() => post(`/targets/${x.id}/refresh`), x.kind === "git_repository" ? t("targets.refetching") : t("targets.repinned"))}
+                                  />
+                                  <ConfirmButton
+                                    size="sm"
+                                    variant="ghost"
+                                    icon="x"
+                                    iconOnly
+                                    aria-label={t("targets.delete")}
+                                    confirmLabel={t("targets.deleteConfirm")}
+                                    title={t("targets.delete")}
+                                    onConfirm={() => void targetAction(() => del(`/targets/${x.id}`), t("targets.deleted", { name: x.display_name }))}
+                                  >
+                                    {t("common.delete")}
+                                  </ConfirmButton>
+                                </span>
+                              </td>
+                            ) : null}
                           </tr>
                         ))}
                       </tbody>
@@ -164,6 +207,7 @@ export function ProjectDetailPage({ id }: { id: number }) {
       )}
       {project ? <ProjectForm open={editing} onClose={() => setEditing(false)} project={project} profiles={profiles.data ?? []} onSaved={() => p.reload()} /> : null}
       <TargetForm open={adding} onClose={() => setAdding(false)} projectId={id} onSaved={() => { targets.reload(); p.reload(); }} />
+      <EditTarget target={editTarget} onClose={() => setEditTarget(null)} onSaved={() => targets.reload()} />
     </Frame>
   );
 }
@@ -250,6 +294,80 @@ function TargetForm({ open, onClose, projectId, onSaved }: { open: boolean; onCl
         <Field label={t("targets.lang")} hint={t("targets.langHint")}>
           {(id) => <input id={id} className="input" value={lang} maxLength={40} placeholder="c" onChange={(e) => setLang(e.target.value)} />}
         </Field>
+        {error ? (
+          <Alert tone="bad" icon="alert">
+            {error}
+          </Alert>
+        ) : null}
+      </form>
+    </Drawer>
+  );
+}
+
+/** Edits a target's name and language; for a git target, its branch or tag (which re-fetches it). */
+function EditTarget({ target, onClose, onSaved }: { target: Target | null; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [lang, setLang] = useState("");
+  const [ref, setRef] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [shown, setShown] = useState<number | null>(null);
+  if (target && shown !== target.id) {
+    setShown(target.id);
+    setName(target.display_name);
+    setLang(target.primary_language);
+    setRef(target.source_ref);
+    setError(undefined);
+  }
+  const git = target?.kind === "git_repository";
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!target) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const body: Record<string, string> = { display_name: name.trim(), primary_language: lang.trim() };
+      if (git && ref.trim() !== target.source_ref) body.source_ref = ref.trim();
+      await patch(`/targets/${target.id}`, body);
+      toast(body.source_ref !== undefined ? t("targets.refetching") : t("targets.saved"));
+      onSaved();
+      onClose();
+      setShown(null);
+    } catch (err) {
+      setError(errorText(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Drawer
+      open={target !== null}
+      onClose={() => {
+        onClose();
+        setShown(null);
+      }}
+      title={target ? t("targets.editTitle", { name: target.display_name }) : ""}
+      foot={
+        <>
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" type="submit" form="edit-target" loading={busy} disabled={!name.trim()}>
+            {t("common.save")}
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-target" className="form-grid" onSubmit={submit}>
+        <Field label={t("targets.col.name")}>{(fid) => <input id={fid} className="input" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />}</Field>
+        <Field label={t("targets.col.lang")}>{(fid) => <input id={fid} className="input" value={lang} maxLength={40} onChange={(e) => setLang(e.target.value)} />}</Field>
+        {git ? (
+          <Field label={t("analyze.ref")} hint={t("targets.refHint")}>
+            {(fid) => <input id={fid} className="input mono" value={ref} spellCheck={false} placeholder="main" onChange={(e) => setRef(e.target.value)} />}
+          </Field>
+        ) : (
+          <Alert icon="info">{t("targets.localHint")}</Alert>
+        )}
         {error ? (
           <Alert tone="bad" icon="alert">
             {error}

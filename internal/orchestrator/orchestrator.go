@@ -250,12 +250,15 @@ type job struct {
 	log    *slog.Logger
 	// settings are the instance's research settings when the job started.
 	settings store.ResearchSettings
+	// cancel stops the job's context with a cause (errPaused, errCancelled…).
+	cancel context.CancelCauseFunc
 }
 
 func (o *Orchestrator) work(parent context.Context, runID int64, status research.RunStatus) {
 	j := &job{o: o, runID: runID, status: status, log: o.log.With("run", runID), settings: store.DefaultResearchSettings()}
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
+	j.cancel = cancel
 	stop := j.heartbeat(ctx, cancel)
 	defer func() {
 		stop()
@@ -328,6 +331,26 @@ func (j *job) heartbeat(ctx context.Context, cancel context.CancelCauseFunc) (st
 		}
 	}()
 	return func() { close(done); wg.Wait() }
+}
+
+// halted stops the job at once when its run was paused or ended (cancelled)
+// since the heartbeat last looked, so no new model call starts after a
+// person pressed pause or cancel; the heartbeat alone notices only on its
+// next tick. It returns the context's error once stopped.
+func (j *job) halted(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	status, err := j.o.store.RunStatus(ctx, j.runID)
+	switch {
+	case err != nil:
+		return nil // the heartbeat will see it; do not fail the call on a lookup error
+	case status == research.RunPaused:
+		j.cancel(errPaused)
+	case status.Terminal():
+		j.cancel(errCancelled)
+	}
+	return ctx.Err()
 }
 
 // finish records how the job ended. Cancellation, pausing and lost leases

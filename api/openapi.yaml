@@ -366,7 +366,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/Run' } }
     post:
       summary: Queue a source-only run (researcher)
-      description: Pins every target to its current revision and records the run scope hash.
+      description: Pins every target to its current revision and records the run scope hash (which covers auto_discover). A run needs at least one pattern or auto_discover; one with neither is refused (422).
       requestBody:
         required: true
         content:
@@ -384,6 +384,12 @@ paths:
       responses:
         '200': { description: Run, content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } } }
         '404': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete a finished run with its hypotheses, evidence, events, artifacts and LLM records (researcher)
+      description: Refused (409) for a run that is not finished, or one with lab approvals (kept as the audit trail).
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Error' }
   /runs/{id}/cancel:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
@@ -549,6 +555,35 @@ paths:
       responses:
         '200': { description: Call, content: { application/json: { schema: { $ref: '#/components/schemas/ModelCall' } } } }
         '404': { $ref: '#/components/responses/Error' }
+
+  /targets/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: A target and how many runs use it (busy = still reading its tree)
+      responses:
+        '200': { description: Target, content: { application/json: { schema: { type: object, properties: { target: { $ref: '#/components/schemas/Target' }, use: { type: object, properties: { runs: { type: integer }, busy: { type: integer } } } } } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: Rename a target or change its language; a new source_ref re-fetches a git target at that ref (researcher)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { display_name: { type: string }, primary_language: { type: string }, source_ref: { type: string } } } } } }
+      responses:
+        '200': { description: Target, content: { application/json: { schema: { $ref: '#/components/schemas/Target' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete a target no run used; a fetched git snapshot is removed from disk (researcher)
+      responses:
+        '204': { description: Deleted }
+        '409': { description: A run used the target, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /targets/{id}/refresh:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Re-pin a local snapshot to its files now (200), or fetch a git target's ref again into a new snapshot (202) (researcher)
+      description: Refused (409) while a run is still reading the target (working, paused or in lab validation).
+      responses:
+        '200': { description: Re-pinned, content: { application/json: { schema: { $ref: '#/components/schemas/Target' } } } }
+        '202': { description: Queued for fetching, content: { application/json: { schema: { $ref: '#/components/schemas/Target' } } } }
+        '409': { $ref: '#/components/responses/Error' }
 
   /hypotheses/{id}:
     parameters: [{ $ref: '#/components/parameters/Id' }]
@@ -876,6 +911,30 @@ paths:
       responses:
         '200': { description: Pattern, content: { application/json: { schema: { $ref: '#/components/schemas/Pattern' } } } }
         '404': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: Edit an unreviewed pattern (researcher); a reviewed pattern is refused (409)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                vulnerability_class: { type: string }
+                cwe_id: { type: string }
+                language: { type: string }
+                root_cause: { type: string }
+                preconditions: { type: array, items: { type: string } }
+                code_signatures: { type: array, items: { type: string } }
+                counter_signatures: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Pattern, content: { application/json: { schema: { $ref: '#/components/schemas/Pattern' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete a pattern no run used (researcher)
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Error' }
 
 components:
   securitySchemes:

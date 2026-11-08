@@ -156,6 +156,54 @@ add `-password-stdin` to set your own).
 5. **New run** → pick the project, targets and patterns; optionally turn on
    **Autopilot**.
 
+### Two ways to hunt: historical patterns and general discovery
+
+- **Historical patterns** (from history mining, or patterns you pick): REMNANT
+  scores code regions by each pattern's code signatures, and the Researcher
+  asks of each region whether it repeats *that* root cause. Hypotheses carry
+  the pattern they came from.
+- **General discovery**: regions are chosen by operations that are often
+  involved in vulnerabilities (`memcpy`, `sprintf`, `system`, `eval`, …), and
+  the Researcher audits each one directly for a defect of any class.
+  Hypotheses carry no pattern.
+- **Both** (the default for repository analyses): a region a pattern already
+  selected is examined once, by the pattern; general discovery takes the
+  remaining candidate slots (*Candidates per run* minus what the patterns use,
+  at least *Candidates per pattern*), so with no patterns it can use the whole
+  budget.
+- A run needs at least one of the two; a repository analysis needs history
+  mining, existing patterns or general discovery.
+
+### Managing targets, runs and patterns
+
+- **Targets** (project page, row actions):
+  - *Edit* renames a target or changes its language; for a Git target a new
+    branch or tag fetches it again at that ref.
+  - *Refresh* re-pins a target to what its source holds now. A local snapshot
+    is re-hashed; do this after you change files under
+    `$REMNANT_DATA_DIR/snapshots/<key>`, otherwise runs fail with "changed on
+    disk since it was pinned". A Git target is fetched again into a new
+    snapshot directory and the old one is removed. Refused while a run is still
+    reading the target (working, paused or in lab validation); runs waiting for
+    review are not affected.
+  - *Delete* works only for a target no run used: runs keep their evidence
+    pinned to their targets. Delete those runs first, or archive the project.
+    A fetched Git snapshot is removed from disk; a local snapshot folder is
+    yours and is never removed.
+  - Two projects cannot fetch Git targets into the same snapshot key; REMNANT
+    refuses the second key up front.
+- **Runs**: *Pause* stops before the next model call (calls already in flight
+  finish), *Resume* continues where it stopped, *Cancel* ends it, *Finalize*
+  writes the report of a run waiting for review. A finished run (completed,
+  cancelled, failed or timed out) can be *deleted* with its hypotheses,
+  evidence, artifacts and LLM records, unless it has lab approvals, which are
+  kept as the audit trail of code that was allowed to run.
+- **Patterns**: an unreviewed pattern can be edited; a reviewed one stays as
+  reviewed (create a new pattern instead). A pattern no run used can be
+  deleted.
+- **Projects**: *Archive* makes a project read-only (no new targets, runs or
+  analyses); it can be made active again.
+
 ---
 
 ## 6. Reviewing and finishing

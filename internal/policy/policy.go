@@ -58,7 +58,10 @@ type RunScope struct {
 	Policy   Policy           `json:"policy"`
 	Targets  []TargetRevision `json:"targets"`
 	Patterns []int64          `json:"patterns"`
-	Limits   any              `json:"limits"`
+	// GeneralDiscovery changes what a run examines, so it is part of the
+	// scope. omitempty keeps the hash of a pattern-only run unchanged.
+	GeneralDiscovery bool `json:"general_discovery,omitempty"`
+	Limits           any  `json:"limits"`
 }
 
 func (s RunScope) Hash() (string, error) {

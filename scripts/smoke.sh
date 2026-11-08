@@ -209,7 +209,8 @@ check "resume" 202 "$(req $RES POST /runs/$RUN3/resume)"
 check "resumed run finishes" review_required "$(wait_status $RUN3 review_required)"
 check "resume twice" 409 "$(req $RES POST /runs/$RUN3/resume)"
 
-check "second run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"
+check "run with no pattern and no general discovery" 422 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"
+check "second run" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"pattern_ids\":[$PAT]}")"
 RUN2=$(j "['id']")
 check "cancel" 202 "$(req $RES POST /runs/$RUN2/cancel)"
 check "cancelled" cancelled "$(wait_status $RUN2 cancelled 5)"
@@ -321,7 +322,7 @@ check "research settings by researcher" 403 "$(req $RES PUT /settings/research "
 check "research settings save" 200 "$(req $ADMIN PUT /settings/research "$SET")"
 check "bad research settings" 422 "$(req $ADMIN PUT /settings/research "$(mut "d['max_candidates']=0")")"
 check "unknown analyzer" 400 "$(req $ADMIN PUT /settings/research "$(mut "d['disabled_static_operations']=['static.magic']")")"
-check "run uses new defaults" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT]}")"; check "default tokens applied" 300000 "$(j "['limits']['max_tokens']")"
+check "run uses new defaults" 202 "$(req $RES POST /runs "{\"project_id\":$PROJ,\"target_ids\":[$TGT],\"auto_discover\":true}")"; check "default tokens applied" 300000 "$(j "['limits']['max_tokens']")"
 RUN5=$(j "['id']"); req $RES POST /runs/$RUN5/cancel >/dev/null
 check "system config" 200 "$(req $ADMIN GET /system/config)"; check "key source" environment "$(j "['master_key_source']")"
 check "no secrets in config" 0 "$(grep -c "$REMNANT_MASTER_KEY" $SP/body)"

@@ -1,7 +1,12 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/ljw097/remnant/internal/fetch"
 	"github.com/ljw097/remnant/internal/llm"
@@ -212,6 +217,12 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t.SourceURI = uri
+		// Fetched snapshots live under one directory per key for the whole
+		// instance; a key in use there would only fail later, at fetch time.
+		if _, err := os.Lstat(filepath.Join(s.cfg.SnapshotDir(), in.SnapshotKey)); err == nil {
+			writeError(w, http.StatusConflict, "conflict", fmt.Sprintf("snapshot key %q is already used on disk; choose another", in.SnapshotKey))
+			return
+		}
 	} else {
 		if in.SourceURI != "" {
 			writeError(w, http.StatusBadRequest, "bad_request", "source_uri is only valid for git_repository targets")
@@ -219,15 +230,25 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		}
 		rev, digest, err := source.LocalSnapshot(s.cfg.SnapshotDir(), in.SnapshotKey)
 		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "snapshot_unavailable", err.Error())
+			writeError(w, http.StatusUnprocessableEntity, "snapshot_unavailable", s.snapshotProblem(err))
 			return
 		}
 		t.Revision, t.TreeSHA256, t.Status = rev, digest, "ready"
 	}
 	target, err := s.store.CreateTarget(r.Context(), projectID, t)
+	if errors.Is(err, store.ErrConflict) && strings.Contains(err.Error(), "snapshot_key") {
+		writeError(w, http.StatusConflict, "conflict", fmt.Sprintf("this project already has a target with snapshot key %q", in.SnapshotKey))
+		return
+	}
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, target)
+}
+
+// snapshotProblem describes a local snapshot error without the server's
+// absolute data path.
+func (s *Server) snapshotProblem(err error) string {
+	return strings.ReplaceAll(err.Error(), s.cfg.SnapshotDir(), "$REMNANT_DATA_DIR/snapshots")
 }

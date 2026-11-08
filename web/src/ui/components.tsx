@@ -330,6 +330,10 @@ export function ConfirmButton({ children, confirmLabel, onConfirm, ...rest }: Bt
   return (
     <Button
       {...rest}
+      // An icon-only button widens to show its confirm label once armed, and
+      // that visible label becomes its accessible name.
+      iconOnly={armed ? false : rest.iconOnly}
+      aria-label={armed ? undefined : rest["aria-label"]}
       variant={armed ? "danger" : rest.variant}
       aria-live="polite"
       onClick={() => {
@@ -339,7 +343,7 @@ export function ConfirmButton({ children, confirmLabel, onConfirm, ...rest }: Bt
         } else setArmed(true);
       }}
     >
-      {armed ? confirmLabel : children}
+      {armed ? confirmLabel : rest.iconOnly ? null : children}
     </Button>
   );
 }

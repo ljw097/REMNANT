@@ -75,8 +75,8 @@ func (o IntakeOptions) Normalize() (IntakeOptions, error) {
 		return o, fmt.Errorf("%w: max_tokens must be 4000–1000000", ErrInvalid)
 	case len(o.IncludePatterns) > 100:
 		return o, fmt.Errorf("%w: include_patterns may list at most 100 patterns", ErrInvalid)
-	case !o.MineHistory && len(o.IncludePatterns) == 0:
-		return o, fmt.Errorf("%w: without history mining, choose at least one existing pattern to hunt for", ErrInvalid)
+	case !o.MineHistory && len(o.IncludePatterns) == 0 && !o.AutoDiscover:
+		return o, fmt.Errorf("%w: nothing to hunt with: turn on history mining or general discovery, or choose existing patterns", ErrInvalid)
 	}
 	return o, nil
 }

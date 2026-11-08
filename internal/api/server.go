@@ -81,6 +81,13 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 	api.HandleFunc("PATCH /api/v1/projects/{id}", s.requireRole(s.updateProject, auth.RoleResearcher))
 	api.HandleFunc("GET /api/v1/projects/{id}/targets", s.listTargets)
 	api.HandleFunc("POST /api/v1/projects/{id}/targets", s.requireRole(s.createTarget, auth.RoleResearcher))
+	api.HandleFunc("GET /api/v1/targets/{id}", s.getTarget)
+	api.HandleFunc("PATCH /api/v1/targets/{id}", s.requireRole(s.updateTarget, auth.RoleResearcher))
+	api.HandleFunc("POST /api/v1/targets/{id}/refresh", s.requireRole(s.refreshTarget, auth.RoleResearcher))
+	api.HandleFunc("DELETE /api/v1/targets/{id}", s.requireRole(s.deleteTarget, auth.RoleResearcher))
+	api.HandleFunc("DELETE /api/v1/runs/{id}", s.requireRole(s.deleteRun, auth.RoleResearcher))
+	api.HandleFunc("PATCH /api/v1/patterns/{id}", s.requireRole(s.updatePattern, auth.RoleResearcher))
+	api.HandleFunc("DELETE /api/v1/patterns/{id}", s.requireRole(s.deletePattern, auth.RoleResearcher))
 
 	api.HandleFunc("GET /api/v1/patterns", s.searchPatterns)
 	api.HandleFunc("POST /api/v1/patterns", s.requireRole(s.createPattern, auth.RoleResearcher))

@@ -230,6 +230,19 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		return nil
 	}
 
+	// General discovery takes the candidate slots the historical patterns
+	// leave unused (at least a pattern's share), and skips regions a pattern
+	// already selected: the pattern-guided review covers them, and examining
+	// the same code twice only duplicates hypotheses. Its list keeps room for
+	// the regions it will drop, so they are replaced by the next best.
+	perPatternK := j.settings.CandidatesPerPattern
+	historic := len(patterns)
+	generalK := 0
+	if scope.Run.AutoDiscover {
+		historic--
+		generalK = max(perPatternK, j.settings.MaxCandidates-historic*perPatternK)
+	}
+
 	var perPattern [][]candidate
 	for _, t := range scope.Targets {
 		dir, err := j.snapshotDir(t)
@@ -238,7 +251,10 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		}
 		tops := make([]topK, len(patterns))
 		for i := range tops {
-			tops[i].k = j.settings.CandidatesPerPattern
+			tops[i].k = perPatternK
+		}
+		if generalK > 0 {
+			tops[historic].k = generalK + historic*perPatternK
 		}
 		_, err = sourceindex.Walk(dir, func(f sourceindex.File) error {
 			if err := ctx.Err(); err != nil {
@@ -263,6 +279,9 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		})
 		if err != nil {
 			return stageErr(ctx, err)
+		}
+		if generalK > 0 {
+			tops[historic].items = withoutRegions(tops[historic].items, tops[:historic], generalK)
 		}
 		for _, top := range tops {
 			perPattern = append(perPattern, top.items)
@@ -295,6 +314,28 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 	j.event(ctx, "stage.mapped", fmt.Sprintf("%d candidate region(s) selected from %d pattern(s)", len(cands), len(patterns)),
 		map[string]any{"candidates": len(cands)})
 	return nil
+}
+
+// withoutRegions drops the candidates whose region one of the other lists
+// already holds, keeping at most k.
+func withoutRegions(items []candidate, others []topK, k int) []candidate {
+	type region struct {
+		path       string
+		start, end int
+	}
+	taken := map[region]bool{}
+	for _, o := range others {
+		for _, c := range o.items {
+			taken[region{c.Chunk.Path, c.Chunk.Start, c.Chunk.End}] = true
+		}
+	}
+	out := make([]candidate, 0, k)
+	for _, c := range items {
+		if len(out) < k && !taken[region{c.Chunk.Path, c.Chunk.Start, c.Chunk.End}] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // agent is a model client bound to one role.
@@ -331,6 +372,9 @@ var errBudget = errors.New("token budget exhausted")
 // call makes one budgeted model call and records token usage.
 // The call is recorded in the call log; its ID is returned for callResult.
 func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any, ref callRef) ([]byte, int64, error) {
+	if err := j.halted(ctx); err != nil {
+		return nil, 0, err
+	}
 	grant := b.reserve(a.maxCallTokens)
 	if grant == 0 {
 		return nil, 0, errBudget
