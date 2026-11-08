@@ -32,12 +32,15 @@ export function StageLine({
   resumeStatus,
   lastStage,
   mini,
+  onSelect,
 }: {
   status: RunStatus;
   resumeStage?: string;
   resumeStatus?: string;
   lastStage?: string;
   mini?: boolean;
+  /** Makes each station a button that opens that stage's details. */
+  onSelect?: (stage: RunStatus) => void;
 }) {
   const { t } = useI18n();
   let mode: "run" | "waiting" | "paused" | "failed" | "done" = "run";
@@ -55,24 +58,32 @@ export function StageLine({
   }
   const label = t("stage.aria", { status: t(`status.run.${status}` as Key) });
   return (
-    <div className={mini ? "stageline mini" : "stageline"} role="img" aria-label={label}>
+    <div className={mini ? "stageline mini" : "stageline"} role={onSelect ? "group" : "img"} aria-label={label}>
       {stations.map((s, i) => {
         const reached = mode === "done" || i <= at;
         const current = i === at && mode !== "done";
         const segment = i === at && mode === "paused" ? "paused" : i === at && mode === "failed" ? "failed" : undefined;
-        return (
-          <div
-            key={s}
-            className="stop"
-            data-reached={reached}
-            data-current={current}
-            data-mode={current ? mode : undefined}
-            data-segment={segment}
-            data-interchange={s === "lab_validation"}
-            title={t(`stage.${s}` as Key)}
-          >
+        const attrs = {
+          "data-reached": reached,
+          "data-current": current,
+          "data-mode": current ? mode : undefined,
+          "data-segment": segment,
+          "data-interchange": s === "lab_validation",
+          title: t(`stage.${s}` as Key),
+        };
+        const inner = (
+          <>
             <span className="dot" />
             {mini ? null : <span className="name">{t(`stage.${s}` as Key)}</span>}
+          </>
+        );
+        return onSelect ? (
+          <button key={s} type="button" className="stop selectable" {...attrs} aria-label={t("detail.stage.open", { stage: t(`stage.${s}` as Key) })} onClick={() => onSelect(s)}>
+            {inner}
+          </button>
+        ) : (
+          <div key={s} className="stop" {...attrs}>
+            {inner}
           </div>
         );
       })}

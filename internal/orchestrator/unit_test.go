@@ -229,3 +229,58 @@ func TestMarkdownNeutralisesUntrustedText(t *testing.T) {
 		t.Fatal("excerpt fence is not longer than backtick runs inside it")
 	}
 }
+
+// Every response schema stays strict after descriptions are added: each
+// object forbids extra properties and requires all of them (OpenAI's strict
+// mode needs both), and descriptions never replace a node's type.
+func TestSchemasStayStrict(t *testing.T) {
+	var walk func(path string, n map[string]any)
+	walk = func(path string, n map[string]any) {
+		if _, ok := n["type"]; !ok {
+			t.Errorf("%s: no type", path)
+		}
+		if props, ok := n["properties"].(map[string]any); ok {
+			if n["additionalProperties"] != false {
+				t.Errorf("%s: additionalProperties is not false", path)
+			}
+			req, _ := n["required"].([]string)
+			if len(req) != len(props) {
+				t.Errorf("%s: %d required of %d properties", path, len(req), len(props))
+			}
+			for k, v := range props {
+				walk(path+"."+k, v.(map[string]any))
+			}
+		}
+		if items, ok := n["items"].(map[string]any); ok {
+			walk(path+"[]", items)
+		}
+	}
+	for name, s := range map[string]map[string]any{"researcher": researcherSchema, "skeptic": skepticSchema, "historian": historianSchema, "reporter": reporterSchema} {
+		walk(name, s)
+	}
+	if researcherSchema["properties"].(map[string]any)["facts"].(map[string]any)["description"] == "" {
+		t.Error("researcher fields lost their descriptions")
+	}
+	// described copies: the shared enum node is not mutated.
+	if _, ok := confidenceEnum["description"]; ok {
+		t.Error("confidenceEnum was mutated")
+	}
+}
+
+// The prompts state the rules the validators enforce, so a model is told
+// up front rather than rejected after the fact.
+func TestPromptsStateValidatorRules(t *testing.T) {
+	for name, c := range map[string]struct{ prompt, want string }{
+		"researcher lines":   {researcherSystem, "line numbers printed at the left"},
+		"researcher fields":  {researcherSystem, "every field must be filled"},
+		"general fields":     {researcherGeneralSystem, "every field must be filled"},
+		"skeptic ranges":     {skepticSystem, "must lie within the cited excerpt"},
+		"historian idents":   {historianSystem, "at least 3 characters"},
+		"historian pre side": {historianSystem, `removed ("-") or unchanged context lines`},
+		"reporter once":      {reporterSystem, "each exactly once"},
+	} {
+		if !strings.Contains(c.prompt, c.want) {
+			t.Errorf("%s: prompt does not say %q", name, c.want)
+		}
+	}
+}

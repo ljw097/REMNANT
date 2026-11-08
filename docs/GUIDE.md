@@ -45,6 +45,9 @@ This builds the web UI and `remnantd`, then runs `remnantd local`, which:
 
 - creates a per-user data directory and a master key file (0600),
 - listens on `127.0.0.1:8080` only and turns automatic updates off,
+- allows repository analysis from github.com, gitlab.com, codeberg.org and
+  bitbucket.org (set `REMNANT_REPO_HOSTS` yourself to change the list, or to
+  an empty value to turn remote repositories off),
 - starts a PostgreSQL in Docker when `REMNANT_DATABASE_URL` is not set
   (container `remnant-db`, a persistent volume, port 5433),
 - applies migrations, serves, and **opens the first-run setup page in your
@@ -118,13 +121,19 @@ add `-password-stdin` to set your own).
 
 ### From a repository URL (the fast path)
 
-1. Enable a repository host once, on the server:
-   `REMNANT_REPO_HOSTS=github.com` (and restart). An administrator sees this on
-   the Analyze page when it is off.
-2. **Analyze a repository** → paste a URL (`github.com/org/repo`, a `.git` URL,
-   or `…/tree/branch`). Leave **Autopilot** and **Find security fixes in the
-   history** on.
-3. REMNANT fetches the repository with its history, finds commits that look
+1. On a server, enable a repository host once: `REMNANT_REPO_HOSTS=github.com`
+   (and restart). `remnantd local` already allows the public code hosts. An
+   administrator sees a notice on the Analyze page when this is off.
+2. On a fresh instance the dashboard shows the start form. If no model is
+   connected yet, paste an Anthropic or OpenAI API key there first; it is
+   tested without spending tokens and saved as a model profile with sensible
+   defaults (adjust it later under Settings → Model profiles).
+3. Paste a URL (`github.com/org/repo`, a `.git` URL, `git@github.com:org/repo.git`
+   or `…/tree/branch`) and press **Start analysis**. The defaults (autopilot,
+   history search, general discovery, a new project) suit most repositories;
+   **Options** shows them all. Later analyses start from **New analysis** at
+   the top of the sidebar.
+4. REMNANT fetches the repository with its history, finds commits that look
    like security fixes, has the **Historian** draft root-cause patterns from
    them, and starts a run that hunts for the same mistakes in the current code.
    With autopilot it triages the hypotheses and writes the report by itself.

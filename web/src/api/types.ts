@@ -289,7 +289,8 @@ export interface RunEvent {
   event_type: string;
   stage: string;
   message: string;
-  payload: Record<string, unknown>;
+  /** null for events recorded without data. */
+  payload: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -454,6 +455,29 @@ export interface Intake {
   updated_at: string;
 }
 
+/** One recorded agent call. request/response come only from GET /model-calls/{id}. */
+export interface ModelCall {
+  id: number;
+  run_id: number | null;
+  intake_id: number | null;
+  role: "hypothesis_researcher" | "skeptic" | "reporter" | "historian";
+  subject: string;
+  evidence_id: number | null;
+  hypothesis_id: number | null;
+  commit_sha: string;
+  model: string;
+  max_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  outcome: "ok" | "refused" | "truncated" | "error" | "stopped";
+  result: string;
+  error: string;
+  request?: string;
+  response?: unknown;
+  created_at: string;
+}
+
 export interface CommitRecord {
   id: number;
   sha: string;
@@ -463,6 +487,8 @@ export interface CommitRecord {
   files: string[];
   signals: string[];
   score: number;
+  /** Only from GET /intakes/{id}/commits/{sha}. */
+  diff?: string;
 }
 
 export interface IntakeDetail {

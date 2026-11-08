@@ -55,6 +55,9 @@ func TestPastedRepo(t *testing.T) {
 		"https://github.com/org/repo/tree/release/1.2":    {"https://github.com/org/repo", "release/1.2"},
 		"https://gitlab.com/org/repo/-/tree/main?ref=x#y": {"https://gitlab.com/org/repo", "main"},
 		"  https://github.com/org/repo?tab=readme  ":      {"https://github.com/org/repo", ""},
+		"git@github.com:org/repo.git":                     {"https://github.com/org/repo.git", ""},
+		"ssh://git@github.com/org/repo.git":               {"https://github.com/org/repo.git", ""},
+		"https://www.GitHub.com/org/repo":                 {"https://github.com/org/repo", ""},
 	} {
 		uri, ref := pastedRepo(in)
 		if uri != want[0] || ref != want[1] {

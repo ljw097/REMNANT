@@ -249,7 +249,7 @@ export function Tabs<V extends string>({ value, onChange, tabs }: { value: V; on
 
 /* ---------- Drawer (side sheet on <dialog>) ---------- */
 
-export function Drawer({ open, onClose, title, children, foot }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; foot?: ReactNode }) {
+export function Drawer({ open, onClose, title, children, foot, wide }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; foot?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const { t } = useI18n();
   useEffect(() => {
@@ -261,7 +261,7 @@ export function Drawer({ open, onClose, title, children, foot }: { open: boolean
   return (
     <dialog
       ref={ref}
-      className="drawer"
+      className={wide ? "drawer wide" : "drawer"}
       onClose={onClose}
       onClick={(e) => {
         if (e.target === ref.current) onClose();

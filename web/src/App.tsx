@@ -18,6 +18,7 @@ import { HypothesisPage } from "./pages/Hypothesis";
 import { ReviewQueuePage } from "./pages/Review";
 import { ApprovalsPage } from "./pages/Approvals";
 import { FindingsPage } from "./pages/Findings";
+import { LlmRecordsPage } from "./pages/LlmRecords";
 import { ProjectsPage } from "./pages/Projects";
 import { ProjectDetailPage } from "./pages/ProjectDetail";
 import { PatternsPage } from "./pages/Patterns";
@@ -51,10 +52,10 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/", icon: "dashboard", label: "nav.dashboard" },
       { to: "/review", icon: "review", label: "nav.review", roles: ["reviewer"], count: (s) => s.awaiting_triage, attention: true },
       { to: "/approvals", icon: "approvals", label: "nav.approvals", count: (s) => s.pending_approvals, attention: true },
-      { to: "/analyze", icon: "branch", label: "nav.analyze", roles: ["researcher"] },
       { to: "/runs", icon: "runs", label: "nav.runs", count: (s) => s.active_runs },
       { to: "/reports", icon: "file", label: "nav.reports" },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
+      { to: "/llm", icon: "cpu", label: "nav.llm" },
     ],
   },
   {
@@ -117,6 +118,12 @@ function Shell() {
           </span>
           <span className="brand-name">{appName(branding)}</span>
         </Link>
+        {can("researcher") ? (
+          <Link to="/analyze" className="nav-cta" aria-current={active("/analyze") ? "page" : undefined} title={t("nav.newAnalysis")}>
+            <Icon name="plus" />
+            <span className="nav-label">{t("nav.newAnalysis")}</span>
+          </Link>
+        ) : null}
         <nav className="nav">
           {navGroups.map((g) => (
             <div className="nav-group" key={g.label}>
@@ -250,6 +257,7 @@ function Routes({ onMenu }: { onMenu: () => void }) {
   if ((m = match("/hypotheses/:id", path))) return <HypothesisPage id={Number(m.id)} />;
   if (path === "/approvals") return <ApprovalsPage />;
   if (path === "/findings") return <FindingsPage />;
+  if (path === "/llm") return <LlmRecordsPage />;
   if (path === "/projects") return <ProjectsPage />;
   if ((m = match("/projects/:id", path))) return <ProjectDetailPage id={Number(m.id)} />;
   if (path === "/patterns") return <PatternsPage />;

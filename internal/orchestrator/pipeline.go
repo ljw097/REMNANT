@@ -226,7 +226,7 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		patterns = append(patterns, compiled{gp, signaturesOf(gp), nil})
 	}
 	if len(patterns) == 0 {
-		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", nil)
+		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", map[string]any{"candidates": 0})
 		return nil
 	}
 
@@ -305,6 +305,8 @@ type agent struct {
 	instructions string
 	// maxCallTokens caps one call.
 	maxCallTokens int64
+	// model names the model, for the call log.
+	model string
 }
 
 // system is the role's system prompt plus the administrator's
@@ -335,31 +337,32 @@ func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cach
 	if profileID == nil {
 		return nil, fmt.Errorf("%s: the run has no LLM profile", role)
 	}
-	if c, ok := cache[*profileID]; ok {
-		return &agent{role, c, cfg.Instructions, callTokens}, nil
-	}
 	creds, err := j.o.store.LLMCredentials(ctx, *profileID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", role, err)
 	}
-	c, err := j.o.opts.NewClient(creds)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", role, err)
+	c, ok := cache[*profileID]
+	if !ok {
+		if c, err = j.o.opts.NewClient(creds); err != nil {
+			return nil, fmt.Errorf("%s: %w", role, err)
+		}
+		cache[*profileID] = c
 	}
-	cache[*profileID] = c
-	return &agent{role, c, cfg.Instructions, callTokens}, nil
+	return &agent{role: role, client: c, instructions: cfg.Instructions, maxCallTokens: callTokens, model: creds.Model}, nil
 }
 
 var errBudget = errors.New("token budget exhausted")
 
 // call makes one budgeted model call and records token usage.
-func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any) ([]byte, error) {
+// The call is recorded in the call log; its ID is returned for callResult.
+func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any, ref callRef) ([]byte, int64, error) {
 	grant := b.reserve(a.maxCallTokens)
 	if grant == 0 {
-		return nil, errBudget
+		return nil, 0, errBudget
 	}
 	env.Role = a.role
-	resp, err := a.client.CompleteJSON(ctx, llm.Request{
+	ref.RunID = &j.runID
+	resp, callID, err := j.o.complete(ctx, a, ref, llm.Request{
 		AgentKey: a.role, System: system, Input: env.render(), Schema: schema, MaxTokens: grant,
 	})
 	b.settle(grant, resp.OutputTokens)
@@ -368,15 +371,15 @@ func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env 
 			err = uerr
 		}
 	}
-	return resp.JSON, err
+	return resp.JSON, callID, err
 }
 
 // genStats counts per-candidate outcomes across concurrent workers.
 type genStats struct {
-	mu                                         sync.Mutex
-	created, declined, duplicate, invalid, err int
-	firstErr                                   error
-	budgetHit                                  bool
+	mu                                                  sync.Mutex
+	created, declined, refused, duplicate, invalid, err int
+	firstErr                                            error
+	budgetHit                                           bool
 }
 
 func (s *genStats) add(f func(*genStats)) {
@@ -471,7 +474,7 @@ func (j *job) generate(ctx context.Context, scope store.WorkScope) error {
 		return err
 	}
 	if researcher == nil {
-		j.event(ctx, "stage.skipped", "Hypothesis Researcher is disabled in agent_profiles", nil)
+		j.event(ctx, "stage.skipped", "Hypothesis Researcher is disabled in agent_profiles", map[string]any{"reason": "researcher_disabled"})
 		return nil
 	}
 	skeptic, err := j.agentFor(ctx, roleSkeptic, scope.Run.LLMProfileID, clients)
@@ -509,13 +512,16 @@ feed:
 		return stageErr(ctx, err)
 	}
 
-	msg := fmt.Sprintf("%d hypothesis(es) drafted; %d region(s) without a credible hypothesis, %d duplicate, %d invalid answer(s), %d failed call(s); %d output tokens used",
-		stats.created, stats.declined, stats.duplicate, stats.invalid, stats.err, b.spent())
+	msg := fmt.Sprintf("%d hypothesis(es) drafted; %d region(s) without a credible hypothesis, %d refused, %d duplicate, %d invalid answer(s), %d failed call(s); %d output tokens used",
+		stats.created, stats.declined, stats.refused, stats.duplicate, stats.invalid, stats.err, b.spent())
 	if stats.budgetHit {
 		msg += "; token budget exhausted before all regions were examined"
 	}
-	j.event(ctx, "stage.generated", msg, map[string]any{"created": stats.created, "output_tokens": b.spent()})
-	if stats.err > 0 && stats.created+stats.declined+stats.duplicate+stats.invalid == 0 {
+	// The counts let the UI explain a run that ends without hypotheses.
+	j.event(ctx, "stage.generated", msg, map[string]any{"created": stats.created, "output_tokens": b.spent(),
+		"regions": len(items), "declined": stats.declined, "refused": stats.refused, "duplicate": stats.duplicate,
+		"invalid": stats.invalid, "failed": stats.err, "budget_hit": stats.budgetHit})
+	if stats.err > 0 && stats.created+stats.declined+stats.refused+stats.duplicate+stats.invalid == 0 {
 		return fmt.Errorf("every model call failed; first error: %w", stats.firstErr)
 	}
 	return nil
@@ -542,15 +548,19 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	}
 	if general {
 		env.Instructions = []string{
-			"No historical pattern applies: audit this region directly for a real security vulnerability of any class (memory safety, injection, path traversal, deserialization, authentication or authorization flaws, unsafe command or code execution, and so on).",
-			"Set found to true only for a specific, falsifiable weakness in this code — not a style note or a theoretical concern.",
+			"No historical pattern applies: audit this region directly for a real security vulnerability of any class.",
+			fmt.Sprintf("It was selected because it contains %s; that is a reason to read it, not evidence of a defect.", strings.Join(c.Matched, ", ")),
 		}
 	} else {
 		pv := viewPattern(c.Pattern)
 		env.Pattern = &pv
 		env.Instructions = []string{
-			"Decide whether this region plausibly contains the pattern's root cause.",
-			fmt.Sprintf("The region matched signature(s): %s.", strings.Join(c.Matched, ", ")),
+			"Decide whether this region repeats the pattern's root cause — the same mistake, not merely the same names.",
+			fmt.Sprintf("The region matched signature(s) %s; the match is textual and is not evidence by itself.", strings.Join(c.Matched, ", ")),
+		}
+		if len(c.Countered) > 0 {
+			env.Instructions = append(env.Instructions, fmt.Sprintf(
+				"It also contains %s, which the original fix introduced: check whether that guard covers this sink.", strings.Join(c.Countered, ", ")))
 		}
 	}
 
@@ -570,17 +580,20 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		if general {
 			sys = researcherGeneralSystem
 		}
-		raw, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema)
+		raw, callID, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema,
+			callRef{Subject: fmt.Sprintf("%s:%d-%d", c.Chunk.Path, c.Chunk.Start, c.Chunk.End), EvidenceID: &c.evidenceID})
 		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
 			if kind == "refused" {
 				j.mark(ctx, c, "refused")
 			}
+			j.o.callResult(ctx, callID, failedResult(kind, err), nil)
 			return
 		}
 		out, err := parseResearcher(raw, allowed)
 		if err != nil {
 			stats.add(func(s *genStats) { s.invalid++ })
 			j.mark(ctx, c, "invalid")
+			j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
 			j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
 				map[string]any{"evidence_id": c.evidenceID})
 			return
@@ -588,6 +601,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		if !out.Found {
 			stats.add(func(s *genStats) { s.declined++ })
 			j.mark(ctx, c, "declined")
+			j.o.callResult(ctx, callID, "declined: no credible hypothesis", nil)
 			return
 		}
 		patternID := c.Pattern.ID
@@ -608,16 +622,19 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		case errors.Is(err, store.ErrDuplicate):
 			stats.add(func(s *genStats) { s.duplicate++ })
 			j.mark(ctx, c, "duplicate")
+			j.o.callResult(ctx, callID, "duplicate of an existing hypothesis", nil)
 			return
 		case err != nil:
 			if ctx.Err() == nil {
 				stats.add(func(s *genStats) { s.invalid++ })
 				j.mark(ctx, c, "invalid")
+				j.o.callResult(ctx, callID, "hypothesis not stored: "+err.Error(), nil)
 				j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
 			}
 			return
 		}
 		stats.add(func(s *genStats) { s.created++ })
+		j.o.callResult(ctx, callID, fmt.Sprintf("hypothesis %d drafted", hypID), &hypID)
 		researcherConfidence = out.TriageConfidence
 		hypothesis = map[string]any{
 			"hypothesis_id": hypID, "title": out.Title, "claim": out.Claim, "facts": out.Facts,
@@ -634,18 +651,22 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, hypID)
 	env.Hypothesis = hypothesis
 	env.Instructions = []string{"Challenge this hypothesis using only the cited excerpt. Check counter_evidence_to_check first."}
-	raw, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema)
+	raw, callID, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema,
+		callRef{Subject: fmt.Sprintf("hypothesis %d", hypID), EvidenceID: &c.evidenceID, HypothesisID: &hypID})
 	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
 	case "":
 	case "stopped", "budget":
+		j.o.callResult(ctx, callID, failedResult(kind, err), nil)
 		return // stays a draft; challenged when the run resumes
 	default:
+		j.o.callResult(ctx, callID, failedResult(kind, err)+"; the hypothesis went to triage unchallenged", nil)
 		j.toTriage(ctx, hypID)
 		return
 	}
 	sk, err := parseSkeptic(raw, allowed)
 	if err != nil {
 		stats.add(func(s *genStats) { s.invalid++ })
+		j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
 		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Skeptic answer for hypothesis %d rejected: %v", hypID, err),
 			map[string]any{"hypothesis_id": hypID})
 		j.toTriage(ctx, hypID)
@@ -666,6 +687,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	counterEv = append(counterEv, store.EvidenceInput{TargetID: c.TargetID, Kind: "counter_evidence", Revision: c.Revision,
 		Summary: "Skeptic rationale (" + sk.Verdict + "): " + sk.Rationale, Metadata: map[string]any{"agent": roleSkeptic}})
 	conf := finalConfidence(researcherConfidence, sk.Verdict, sk.AdjustedConfidence)
+	j.o.callResult(ctx, callID, fmt.Sprintf("verdict %s; priority %s", sk.Verdict, conf), nil)
 	if err := j.o.store.RecordSkeptic(ctx, j.runID, hypID, sk.Verdict, conf, counter, counterEv); err != nil && ctx.Err() == nil {
 		j.log.Error("record skeptic", "hypothesis", hypID, "err", err)
 	}
@@ -684,7 +706,7 @@ func (j *job) callFailed(ctx context.Context, err error, c candidate, role strin
 		stats.add(func(s *genStats) { s.budgetHit = true })
 		return "budget"
 	case errors.As(err, &refusal):
-		stats.add(func(s *genStats) { s.declined++ })
+		stats.add(func(s *genStats) { s.refused++ })
 		j.event(ctx, "agent.refused", fmt.Sprintf("Model declined the %s task for evidence %d (%s)", role, c.evidenceID, refusal.Category),
 			map[string]any{"evidence_id": c.evidenceID, "category": refusal.Category})
 		return "refused"

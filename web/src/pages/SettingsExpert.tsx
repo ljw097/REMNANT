@@ -9,12 +9,12 @@ import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Alert, Button, ConfirmButton, Drawer, Empty, errorText, Field, Panel, SkeletonRows, Time, useToast } from "../ui/components";
 
-type Provider = "anthropic" | "openai";
-const providers: Provider[] = ["anthropic", "openai"];
+export type Provider = "anthropic" | "openai";
+export const providers: Provider[] = ["anthropic", "openai"];
 
 // Per-provider model suggestions, a sensible default model, and the base URL
 // and key-hint shown as placeholders. The model field stays free text.
-const providerInfo: Record<Provider, { models: string[]; baseUrl: string; keyHint: string }> = {
+export const providerInfo: Record<Provider, { models: string[]; baseUrl: string; keyHint: string }> = {
   anthropic: {
     models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
     baseUrl: "https://api.anthropic.com",

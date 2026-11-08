@@ -31,7 +31,9 @@ const sections: { id: Section; icon: IconName; admin?: boolean }[] = [
 
 export function SettingsPage({ section }: { section: string }) {
   const { t } = useI18n();
-  const { can } = useSession();
+  const { can, policy } = useSession();
+  // On a personal instance the only user is the administrator; the badges add nothing.
+  const badges = policy.profile !== "personal";
   const visible = sections.filter((s) => !s.admin || can("admin"));
   const current = (visible.find((s) => s.id === section)?.id ?? "preferences") as Section;
   // On narrow screens the section nav is a horizontal strip; keep the open section in view.
@@ -50,7 +52,7 @@ export function SettingsPage({ section }: { section: string }) {
             <Link key={s.id} to={`/settings/${s.id}`} aria-current={s.id === current ? "page" : undefined}>
               <Icon name={s.icon} />
               {t(`settings.${s.id}` as Key)}
-              {s.admin ? <span className="count">{t("role.admin")}</span> : null}
+              {s.admin && badges ? <span className="count">{t("role.admin")}</span> : null}
             </Link>
           ))}
         </nav>

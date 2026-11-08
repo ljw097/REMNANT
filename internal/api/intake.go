@@ -11,14 +11,23 @@ import (
 	"github.com/ljw097/remnant/internal/store"
 )
 
+// scpRe matches the SSH form a clone button offers: git@github.com:org/repo.git.
+var scpRe = regexp.MustCompile(`^[A-Za-z0-9._-]+@([A-Za-z0-9.-]+):([^/].*)$`)
+
 // treeRe matches the "/tree/<ref>" part of a pasted repository page URL.
 var treeRe = regexp.MustCompile(`^(/[^/]+/[^/]+)/(?:-/)?tree/([^?#]+)$`)
 
 // pastedRepo turns what a person pastes — "github.com/org/repo",
-// "https://github.com/org/repo.git", ".../tree/v1.2" — into a repository
-// URL and an optional ref.
+// "https://github.com/org/repo.git", ".../tree/v1.2", "git@github.com:org/repo.git",
+// "www.github.com/org/repo" — into a repository URL and an optional ref. The
+// result is fetched over https only; credentials in the paste are dropped by
+// CanonicalRepoURL's checks, never used.
 func pastedRepo(raw string) (uri, ref string) {
 	raw = strings.TrimSpace(raw)
+	if m := scpRe.FindStringSubmatch(raw); m != nil && !strings.Contains(raw, "://") {
+		raw = "https://" + m[1] + "/" + m[2]
+	}
+	raw = strings.TrimPrefix(raw, "ssh://git@")
 	if !strings.Contains(raw, "://") {
 		raw = "https://" + raw
 	}
@@ -27,6 +36,7 @@ func pastedRepo(raw string) (uri, ref string) {
 		return raw, ""
 	}
 	u.RawQuery, u.Fragment = "", ""
+	u.Host = strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 	p := strings.TrimSuffix(u.Path, "/")
 	if m := treeRe.FindStringSubmatch(p); m != nil {
 		p, ref = m[1], strings.TrimSuffix(m[2], "/")

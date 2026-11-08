@@ -1268,6 +1268,79 @@ func TestRepositoryIntake(t *testing.T) {
 	if len(hs) == 0 || hs[0].PatternID == nil || *hs[0].PatternID != p.ID {
 		t.Fatalf("hypotheses %+v", hs)
 	}
+
+	// Every model call is in the call log, linked to what it produced.
+	hc, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{IntakeID: &in.ID})
+	must(t, err)
+	if len(hc) != 1 || hc[0].Role != roleHistorian || hc[0].CommitSHA != recs[0].SHA || hc[0].Outcome != "ok" ||
+		hc[0].Result != fmt.Sprintf("pattern %d created", p.ID) || hc[0].OutputTokens != 200 {
+		t.Fatalf("historian call log %+v", hc)
+	}
+	full, err := e.st.GetModelCall(e.ctx, hc[0].ID)
+	must(t, err)
+	if !strings.Contains(full.Request, recs[0].SHA) || len(full.Response) == 0 {
+		t.Fatalf("historian call body: request %d bytes, response %s", len(full.Request), full.Response)
+	}
+	byHyp, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{HypothesisID: &hs[0].ID})
+	must(t, err)
+	roles := map[string]string{}
+	for _, c := range byHyp {
+		roles[c.Role] = c.Result
+	}
+	if roles[roleResearcher] != fmt.Sprintf("hypothesis %d drafted", hs[0].ID) || !strings.HasPrefix(roles[roleSkeptic], "verdict ") {
+		t.Fatalf("hypothesis call log %+v", byHyp)
+	}
+	runCalls, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{RunID: in.RunID})
+	must(t, err)
+	if len(runCalls) < 2 || runCalls[0].Request != "" {
+		t.Fatalf("run call log %+v", runCalls)
+	}
+
+	// The instance-wide LLM record: filters, totals for the whole filter, paging.
+	all, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{})
+	must(t, err)
+	if all.Stats.Calls != int64(len(runCalls)+1) || all.Stats.ByRole[roleHistorian] != 1 || all.Calls[0].ID < all.Calls[len(all.Calls)-1].ID {
+		t.Fatalf("all calls %+v", all.Stats)
+	}
+	hist, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Owner: "intake", Q: recs[0].SHA[:10]})
+	must(t, err)
+	if len(hist.Calls) != 1 || hist.Calls[0].Role != roleHistorian || hist.Stats.Calls != 1 {
+		t.Fatalf("search by commit %+v", hist)
+	}
+	first, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Limit: 1})
+	must(t, err)
+	next, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Limit: 1, BeforeID: first.NextBefore})
+	must(t, err)
+	if len(first.Calls) != 1 || first.NextBefore == 0 || len(next.Calls) != 1 || next.Calls[0].ID >= first.Calls[0].ID || next.Stats.Calls != all.Stats.Calls {
+		t.Fatalf("paging %+v / %+v", first, next)
+	}
+	refused, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Outcome: "refused"})
+	must(t, err)
+	if refused.Stats.Calls != all.Stats.ByOutcome["refused"] || int64(len(refused.Calls)) != refused.Stats.Calls {
+		t.Fatalf("refused filter %+v (all %+v)", refused.Stats, all.Stats)
+	}
+	for _, c := range refused.Calls {
+		if c.Outcome != "refused" || c.Result == "" {
+			t.Fatalf("refused call %+v", c)
+		}
+	}
+
+	// Analysing the same repository again reuses the pattern mined from the
+	// same fix commit instead of failing on its uniqueness.
+	again, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser again",
+		LLMProfileID: &ps[0].ID, Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("second fetch: %v %v", ok, err)
+	}
+	if ok, err := o.IntakeOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("second intake: %v %v", ok, err)
+	}
+	again, err = e.st.GetIntake(e.ctx, again.ID)
+	must(t, err)
+	if again.Status != store.IntakeStarted || again.RunID == nil || len(again.Patterns) != 1 || again.Patterns[0] != p.ID {
+		t.Fatalf("second intake of the same repository %+v (error %q)", again, again.ErrorSummary)
+	}
 }
 
 // An intake whose repository cannot be fetched fails with the reason, and
@@ -1294,6 +1367,35 @@ func TestRepositoryIntakeFailures(t *testing.T) {
 	if _, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/y", ProjectName: "y",
 		Options: store.IntakeOptions{MineHistory: false}}, e.alice); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("no mining and no patterns: %v", err)
+	}
+}
+
+// When every Historian call fails (for example a rejected key) the intake
+// fails with the first error instead of starting a run without patterns.
+func TestRepositoryIntakeModelDown(t *testing.T) {
+	e := setup(t)
+	repo := gitRepo(t)
+	o := New(e.st, e.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		LeaseTTL:  3 * time.Second,
+		NewClient: func(p llm.Profile) (llm.Client, error) { return &fakeModel{failAll: true}, nil },
+		Fetcher: &fetch.Fetcher{SnapshotDir: e.cfg.SnapshotDir(), AllowedHosts: []string{"git.example.test"},
+			LookupIP: func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			},
+			GitConfig: []string{"url." + repo + ".insteadOf=https://git.example.test/acme/parser", "protocol.file.allow=always"}},
+	})
+	ps, _ := e.st.ListLLMProfiles(e.ctx)
+	in, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser",
+		LLMProfileID: &ps[0].ID, Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("fetch: %v %v", ok, err)
+	}
+	_, _ = o.IntakeOnce(e.ctx)
+	in, err = e.st.GetIntake(e.ctx, in.ID)
+	must(t, err)
+	if in.Status != store.IntakeFailed || !strings.Contains(in.ErrorSummary, "every model call failed") || !strings.Contains(in.ErrorSummary, "invalid x-api-key") {
+		t.Fatalf("intake with the model down %+v", in)
 	}
 }
 
