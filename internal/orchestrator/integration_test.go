@@ -1268,6 +1268,23 @@ func TestRepositoryIntake(t *testing.T) {
 	if len(hs) == 0 || hs[0].PatternID == nil || *hs[0].PatternID != p.ID {
 		t.Fatalf("hypotheses %+v", hs)
 	}
+
+	// Analysing the same repository again reuses the pattern mined from the
+	// same fix commit instead of failing on its uniqueness.
+	again, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser again",
+		LLMProfileID: &ps[0].ID, Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("second fetch: %v %v", ok, err)
+	}
+	if ok, err := o.IntakeOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("second intake: %v %v", ok, err)
+	}
+	again, err = e.st.GetIntake(e.ctx, again.ID)
+	must(t, err)
+	if again.Status != store.IntakeStarted || again.RunID == nil || len(again.Patterns) != 1 || again.Patterns[0] != p.ID {
+		t.Fatalf("second intake of the same repository %+v (error %q)", again, again.ErrorSummary)
+	}
 }
 
 // An intake whose repository cannot be fetched fails with the reason, and
@@ -1294,6 +1311,35 @@ func TestRepositoryIntakeFailures(t *testing.T) {
 	if _, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/y", ProjectName: "y",
 		Options: store.IntakeOptions{MineHistory: false}}, e.alice); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("no mining and no patterns: %v", err)
+	}
+}
+
+// When every Historian call fails (for example a rejected key) the intake
+// fails with the first error instead of starting a run without patterns.
+func TestRepositoryIntakeModelDown(t *testing.T) {
+	e := setup(t)
+	repo := gitRepo(t)
+	o := New(e.st, e.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		LeaseTTL:  3 * time.Second,
+		NewClient: func(p llm.Profile) (llm.Client, error) { return &fakeModel{failAll: true}, nil },
+		Fetcher: &fetch.Fetcher{SnapshotDir: e.cfg.SnapshotDir(), AllowedHosts: []string{"git.example.test"},
+			LookupIP: func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			},
+			GitConfig: []string{"url." + repo + ".insteadOf=https://git.example.test/acme/parser", "protocol.file.allow=always"}},
+	})
+	ps, _ := e.st.ListLLMProfiles(e.ctx)
+	in, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser",
+		LLMProfileID: &ps[0].ID, Options: store.IntakeOptions{MineHistory: true}}, e.alice)
+	must(t, err)
+	if ok, err := o.FetchOnce(e.ctx); !ok || err != nil {
+		t.Fatalf("fetch: %v %v", ok, err)
+	}
+	_, _ = o.IntakeOnce(e.ctx)
+	in, err = e.st.GetIntake(e.ctx, in.ID)
+	must(t, err)
+	if in.Status != store.IntakeFailed || !strings.Contains(in.ErrorSummary, "every model call failed") || !strings.Contains(in.ErrorSummary, "invalid x-api-key") {
+		t.Fatalf("intake with the model down %+v", in)
 	}
 }
 

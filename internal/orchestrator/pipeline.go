@@ -226,7 +226,7 @@ func (j *job) mapSurface(ctx context.Context, scope store.WorkScope) error {
 		patterns = append(patterns, compiled{gp, signaturesOf(gp), nil})
 	}
 	if len(patterns) == 0 {
-		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", nil)
+		j.event(ctx, "stage.mapped", "No pattern with code signatures; nothing to map", map[string]any{"candidates": 0})
 		return nil
 	}
 
@@ -373,10 +373,10 @@ func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env 
 
 // genStats counts per-candidate outcomes across concurrent workers.
 type genStats struct {
-	mu                                         sync.Mutex
-	created, declined, duplicate, invalid, err int
-	firstErr                                   error
-	budgetHit                                  bool
+	mu                                                  sync.Mutex
+	created, declined, refused, duplicate, invalid, err int
+	firstErr                                            error
+	budgetHit                                           bool
 }
 
 func (s *genStats) add(f func(*genStats)) {
@@ -471,7 +471,7 @@ func (j *job) generate(ctx context.Context, scope store.WorkScope) error {
 		return err
 	}
 	if researcher == nil {
-		j.event(ctx, "stage.skipped", "Hypothesis Researcher is disabled in agent_profiles", nil)
+		j.event(ctx, "stage.skipped", "Hypothesis Researcher is disabled in agent_profiles", map[string]any{"reason": "researcher_disabled"})
 		return nil
 	}
 	skeptic, err := j.agentFor(ctx, roleSkeptic, scope.Run.LLMProfileID, clients)
@@ -509,13 +509,16 @@ feed:
 		return stageErr(ctx, err)
 	}
 
-	msg := fmt.Sprintf("%d hypothesis(es) drafted; %d region(s) without a credible hypothesis, %d duplicate, %d invalid answer(s), %d failed call(s); %d output tokens used",
-		stats.created, stats.declined, stats.duplicate, stats.invalid, stats.err, b.spent())
+	msg := fmt.Sprintf("%d hypothesis(es) drafted; %d region(s) without a credible hypothesis, %d refused, %d duplicate, %d invalid answer(s), %d failed call(s); %d output tokens used",
+		stats.created, stats.declined, stats.refused, stats.duplicate, stats.invalid, stats.err, b.spent())
 	if stats.budgetHit {
 		msg += "; token budget exhausted before all regions were examined"
 	}
-	j.event(ctx, "stage.generated", msg, map[string]any{"created": stats.created, "output_tokens": b.spent()})
-	if stats.err > 0 && stats.created+stats.declined+stats.duplicate+stats.invalid == 0 {
+	// The counts let the UI explain a run that ends without hypotheses.
+	j.event(ctx, "stage.generated", msg, map[string]any{"created": stats.created, "output_tokens": b.spent(),
+		"regions": len(items), "declined": stats.declined, "refused": stats.refused, "duplicate": stats.duplicate,
+		"invalid": stats.invalid, "failed": stats.err, "budget_hit": stats.budgetHit})
+	if stats.err > 0 && stats.created+stats.declined+stats.refused+stats.duplicate+stats.invalid == 0 {
 		return fmt.Errorf("every model call failed; first error: %w", stats.firstErr)
 	}
 	return nil
@@ -684,7 +687,7 @@ func (j *job) callFailed(ctx context.Context, err error, c candidate, role strin
 		stats.add(func(s *genStats) { s.budgetHit = true })
 		return "budget"
 	case errors.As(err, &refusal):
-		stats.add(func(s *genStats) { s.declined++ })
+		stats.add(func(s *genStats) { s.refused++ })
 		j.event(ctx, "agent.refused", fmt.Sprintf("Model declined the %s task for evidence %d (%s)", role, c.evidenceID, refusal.Category),
 			map[string]any{"evidence_id": c.evidenceID, "category": refusal.Category})
 		return "refused"

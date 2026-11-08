@@ -289,7 +289,8 @@ export interface RunEvent {
   event_type: string;
   stage: string;
   message: string;
-  payload: Record<string, unknown>;
+  /** null for events recorded without data. */
+  payload: Record<string, unknown> | null;
   created_at: string;
 }
 

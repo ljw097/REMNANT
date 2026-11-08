@@ -359,6 +359,10 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 		return nil, err
 	}
 	b := newBudget(max(0, int64(in.Options.MaxTokens)-in.OutputTokens))
+	// One failed call (a truncated answer, a transient API error) skips that
+	// commit; the intake fails only when no call succeeded at all.
+	var answered, failed int
+	var firstErr error
 	read := in.CommitsRead
 	for i := read; i < len(records) && len(patterns) < in.Options.MaxPatterns; i++ {
 		c := records[i]
@@ -384,11 +388,18 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 				return nil, ctx.Err()
 			}
 			var refusal *llm.RefusalError
-			if !errors.As(callErr, &refusal) {
-				return nil, fmt.Errorf("historian: %w", callErr)
+			if errors.As(callErr, &refusal) {
+				answered++
+				log.Warn("historian refused a commit", "commit", c.SHA, "err", callErr)
+			} else {
+				failed++
+				if firstErr == nil {
+					firstErr = callErr
+				}
+				log.Warn("historian call failed; skipping the commit", "commit", c.SHA, "err", callErr)
 			}
-			log.Warn("historian refused a commit", "commit", c.SHA, "err", callErr)
 		} else {
+			answered++
 			var out historianOutput
 			if err := json.Unmarshal(resp.JSON, &out); err != nil {
 				log.Warn("historian answer is not valid", "commit", c.SHA, "err", err)
@@ -399,17 +410,25 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 				if in.CreatedBy != nil {
 					by = *in.CreatedBy
 				}
-				p, err := o.store.CreatePattern(ctx, pin, by)
-				if err != nil {
+				p, reused, err := o.store.CreateOrReusePattern(ctx, pin, by)
+				switch {
+				case err != nil:
 					return nil, err
+				case reused && p.ValidationStatus == "rejected":
+					log.Info("commit's pattern was rejected in review; not reused", "commit", c.SHA, "pattern", p.ID)
+				case slices.Contains(patterns, p.ID):
+				default:
+					patterns = append(patterns, p.ID)
+					prog.Patterns = patterns
 				}
-				patterns = append(patterns, p.ID)
-				prog.Patterns = patterns
 			}
 		}
 		if err := o.store.UpdateIntake(ctx, in.ID, o.owner, prog); err != nil {
 			return nil, err
 		}
+	}
+	if failed > 0 && answered == 0 {
+		return nil, fmt.Errorf("historian: every model call failed (%d); first error: %w", failed, firstErr)
 	}
 	return patterns, nil
 }

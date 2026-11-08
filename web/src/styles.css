@@ -840,3 +840,4 @@ a.ref:hover { color: var(--accent); background: color-mix(in oklch, var(--accent
 .quick-plan { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; margin-top: -4px; }
 .rule.boxed { border: 1px solid var(--rule); border-radius: 6px; }
 .rule.boxed:first-of-type { border-top: 1px solid var(--rule); }
+.why-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }

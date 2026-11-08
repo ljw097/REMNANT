@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -43,6 +44,25 @@ func (s *Store) CreatePattern(ctx context.Context, in PatternInput, createdBy in
 		in.RootCause, nonNil(in.Preconditions), nonNil(in.LifecyclePoints), nonNil(in.CodeSignatures),
 		nonNil(in.CounterSignatures), in.PatchSemantics, createdBy, in.Origin))
 	return p, mapErr(err)
+}
+
+// CreateOrReusePattern stores a pattern, or returns the newest one already
+// stored with the same source reference and title — what an earlier analysis
+// mined from the same fix commit — so analysing a repository again reuses its
+// patterns instead of failing on the uniqueness constraint. reused reports
+// the latter.
+func (s *Store) CreateOrReusePattern(ctx context.Context, in PatternInput, createdBy int64) (p Pattern, reused bool, err error) {
+	p, err = s.CreatePattern(ctx, in, createdBy)
+	if !errors.Is(err, ErrConflict) {
+		return p, false, err
+	}
+	existing, ferr := one[Pattern](s.pool.Query(ctx, `
+		SELECT `+patternCols+` FROM patterns WHERE source_ref = $1 AND title = $2
+		ORDER BY version DESC LIMIT 1`, in.SourceRef, in.Title))
+	if ferr != nil {
+		return p, false, err // not a duplicate after all: report the original conflict
+	}
+	return existing, true, nil
 }
 
 // SearchPatterns matches q against title, root cause, CWE and source
