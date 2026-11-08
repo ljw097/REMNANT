@@ -10,7 +10,7 @@ import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { navigate, useLocation } from "../router";
 import { Button, Empty, ErrorNote, PageHead, Panel, SkeletonRows } from "../ui/components";
-import { CallTable, ModelCallDrawer, ms } from "../ui/Details";
+import { CallTable, ModelCallDrawer, ms } from "../ui/ModelCalls";
 
 interface Page {
   calls: ModelCall[];

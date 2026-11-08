@@ -9,7 +9,7 @@ import type { Approval, Evidence, Experiment, Hypothesis, HypothesisDetail, LabL
 import { Alert, Button, Drawer, Empty, ErrorNote, errorText, Field, Hash, Panel, Priority, Ref, SkeletonRows, State, Time, useToast } from "../ui/components";
 import { Custody, Excerpt, HypothesisFlow, PolicyList, SectionTitle, type CustodyEntry } from "../ui/domain";
 import { decisionLook, experimentLook, hypothesisLook } from "../ui/status";
-import { ModelCalls } from "../ui/Details";
+import { ModelCalls } from "../ui/ModelCalls";
 
 export function HypothesisPage({ id }: { id: number }) {
   const { t } = useI18n();
