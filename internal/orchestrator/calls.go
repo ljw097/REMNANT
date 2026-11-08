@@ -3,12 +3,57 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/ljw097/remnant/internal/llm"
 	"github.com/ljw097/remnant/internal/store"
 )
+
+// errNoProfile: neither the role's override nor the caller names a model profile.
+var errNoProfile = errors.New("no model profile")
+
+// newAgent builds the agent for a role from its agent_profiles row: whether
+// it runs at all, which model profile it uses (the role's override, else
+// fallbackProfile), its extra instructions and its per-call token cap (the
+// role's, else the research settings', else the default). It returns nil, nil
+// when the role is turned off. A non-nil cache shares one client per model
+// profile between roles.
+func (o *Orchestrator) newAgent(ctx context.Context, role string, fallbackProfile *int64, settings store.ResearchSettings, cache map[int64]llm.Client) (*agent, error) {
+	enabled, override, cfg, err := o.store.AgentProfile(ctx, role)
+	if err != nil || !enabled {
+		return nil, err
+	}
+	profileID := fallbackProfile
+	if override != nil {
+		profileID = override
+	}
+	if profileID == nil {
+		return nil, fmt.Errorf("%s: %w", role, errNoProfile)
+	}
+	creds, err := o.store.LLMCredentials(ctx, *profileID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", role, err)
+	}
+	client, ok := cache[*profileID]
+	if !ok {
+		if client, err = o.opts.NewClient(creds); err != nil {
+			return nil, fmt.Errorf("%s: %w", role, err)
+		}
+		if cache != nil {
+			cache[*profileID] = client
+		}
+	}
+	callTokens := cfg.MaxCallTokens
+	if callTokens <= 0 {
+		callTokens = settings.MaxCallTokens
+	}
+	if callTokens <= 0 {
+		callTokens = store.DefaultResearchSettings().MaxCallTokens
+	}
+	return &agent{role: role, client: client, instructions: cfg.Instructions, maxCallTokens: int64(callTokens), model: creds.Model}, nil
+}
 
 // callRef says what a model call is about, for the call log.
 type callRef struct {

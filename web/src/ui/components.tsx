@@ -109,8 +109,9 @@ export function Ref({ kind, id, to }: { kind: "H" | "E" | "R" | "A" | "P" | "T" 
   );
 }
 
-function routeClick(e: React.MouseEvent, to: string) {
-  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+/** Client-side navigation for a plain <a>, leaving modified clicks (new tab, etc.) to the browser. */
+export function routeClick(e: React.MouseEvent, to: string) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   navigate(to);
 }

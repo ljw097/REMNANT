@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -173,30 +174,15 @@ func (j *job) writeNarrative(ctx context.Context, rep store.RunReport, repo stri
 	if len(hs) == 0 {
 		return nil
 	}
-	enabled, override, cfg, err := j.o.store.AgentProfile(ctx, roleReporter)
-	if err != nil || !enabled {
-		return nil
-	}
-	profileID := rep.Run.LLMProfileID
-	if override != nil {
-		profileID = override
-	}
-	if profileID == nil {
-		return nil
-	}
-	creds, err := j.o.store.LLMCredentials(ctx, *profileID)
+	a, err := j.o.newAgent(ctx, roleReporter, rep.Run.LLMProfileID, j.settings, nil)
 	if err != nil {
-		j.log.Warn("reporter: no credentials", "err", err)
+		if !errors.Is(err, errNoProfile) {
+			j.log.Warn("reporter unavailable", "err", err)
+		}
 		return nil
 	}
-	client, err := j.o.opts.NewClient(creds)
-	if err != nil {
-		j.log.Warn("reporter: client", "err", err)
+	if a == nil {
 		return nil
-	}
-	a := &agent{role: roleReporter, client: client, instructions: cfg.Instructions, maxCallTokens: int64(j.settings.MaxCallTokens), model: creds.Model}
-	if cfg.MaxCallTokens > 0 {
-		a.maxCallTokens = int64(cfg.MaxCallTokens)
 	}
 	env := buildReporterEnvelope(j.runID, repo, rep, hs)
 	resp, callID, err := j.o.complete(ctx, a, callRef{RunID: &j.runID, Subject: fmt.Sprintf("report for %d finding(s)", len(hs))},

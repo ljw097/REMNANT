@@ -127,6 +127,52 @@ func isIdentByte(c byte) bool {
 	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
+// intakeLog is the part of a logger intake mining uses.
+type intakeLog interface {
+	Info(string, ...any)
+	Warn(string, ...any)
+}
+
+// patternFromAnswer turns one Historian answer into a pattern for this
+// intake: it stores a new pattern or reuses the one an earlier analysis mined
+// from the same commit. id is the pattern to add (0 when the answer yields
+// none, the pattern was rejected in review, or it is already in the
+// intake); result says what happened, for the call log. err is a storage
+// failure only.
+func (o *Orchestrator) patternFromAnswer(ctx context.Context, in store.Intake, c store.CommitRecord, answer json.RawMessage, have []int64, log intakeLog) (id int64, result string, err error) {
+	var out historianOutput
+	if err := json.Unmarshal(answer, &out); err != nil {
+		log.Warn("historian answer is not valid", "commit", c.SHA, "err", err)
+		return 0, "invalid answer: " + err.Error(), nil
+	}
+	pin, err := minedPattern(out, c, in.SourceURI)
+	if err != nil {
+		log.Info("commit not turned into a pattern", "commit", c.SHA, "reason", err.Error())
+		result := "no pattern: " + err.Error()
+		if out.Reason != "" {
+			result += " — " + out.Reason
+		}
+		return 0, result, nil
+	}
+	by := int64(0)
+	if in.CreatedBy != nil {
+		by = *in.CreatedBy
+	}
+	p, reused, err := o.store.CreateOrReusePattern(ctx, pin, by)
+	switch {
+	case err != nil:
+		return 0, "", err
+	case reused && p.ValidationStatus == "rejected":
+		log.Info("commit's pattern was rejected in review; not reused", "commit", c.SHA, "pattern", p.ID)
+		return 0, fmt.Sprintf("pattern %d exists but was rejected in review; not used", p.ID), nil
+	case slices.Contains(have, p.ID):
+		return 0, fmt.Sprintf("pattern %d (already in this analysis)", p.ID), nil
+	case reused:
+		return p.ID, fmt.Sprintf("pattern %d reused from an earlier analysis", p.ID), nil
+	}
+	return p.ID, fmt.Sprintf("pattern %d created", p.ID), nil
+}
+
 // minedPattern turns the Historian's answer into a pattern, or explains why
 // it cannot be one. Signatures must be identifiers present on the pre-fix
 // side of the diff, so the pattern can match real code.
@@ -318,22 +364,8 @@ func (o *Orchestrator) IntakeOnce(ctx context.Context) (bool, error) {
 
 // mine has the Historian read the strongest fix candidates, resuming after
 // the ones an earlier attempt already read, and returns the pattern IDs.
-func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int64, log interface {
-	Info(string, ...any)
-	Warn(string, ...any)
-}) ([]int64, error) {
-	enabled, override, cfg, err := o.store.AgentProfile(ctx, roleHistorian)
-	if err != nil {
-		return nil, err
-	}
-	if !enabled {
-		log.Info("historian disabled; no patterns drafted")
-		return patterns, nil
-	}
+func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int64, log intakeLog) ([]int64, error) {
 	profileID := in.LLMProfileID
-	if override != nil {
-		profileID = override
-	}
 	if profileID == nil {
 		p, err := o.store.GetProject(ctx, in.ProjectID)
 		if err != nil {
@@ -341,24 +373,19 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 		}
 		profileID = p.LLMProfileID
 	}
-	if profileID == nil {
-		return nil, errors.New("no model profile: choose one for the intake or the project")
-	}
-	creds, err := o.store.LLMCredentials(ctx, *profileID)
-	if err != nil {
-		return nil, err
-	}
-	client, err := o.opts.NewClient(creds)
-	if err != nil {
-		return nil, err
-	}
 	settings, err := o.store.ResearchSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	a := &agent{role: roleHistorian, client: client, instructions: cfg.Instructions, maxCallTokens: int64(settings.MaxCallTokens), model: creds.Model}
-	if cfg.MaxCallTokens > 0 {
-		a.maxCallTokens = int64(cfg.MaxCallTokens)
+	a, err := o.newAgent(ctx, roleHistorian, profileID, settings, nil)
+	switch {
+	case errors.Is(err, errNoProfile):
+		return nil, errors.New("no model profile: choose one for the intake or the project")
+	case err != nil:
+		return nil, err
+	case a == nil:
+		log.Info("historian disabled; no patterns drafted")
+		return patterns, nil
 	}
 	records, err := o.store.CommitRecords(ctx, in.TargetID, in.Options.MaxCommits, true)
 	if err != nil {
@@ -408,41 +435,15 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 			}
 		} else {
 			answered++
-			var out historianOutput
-			if err := json.Unmarshal(resp.JSON, &out); err != nil {
-				log.Warn("historian answer is not valid", "commit", c.SHA, "err", err)
-				o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
-			} else if pin, err := minedPattern(out, c, in.SourceURI); err != nil {
-				log.Info("commit not turned into a pattern", "commit", c.SHA, "reason", err.Error())
-				result := "no pattern: " + err.Error()
-				if out.Reason != "" {
-					result += " — " + out.Reason
-				}
-				o.callResult(ctx, callID, result, nil)
-			} else {
-				by := int64(0)
-				if in.CreatedBy != nil {
-					by = *in.CreatedBy
-				}
-				p, reused, err := o.store.CreateOrReusePattern(ctx, pin, by)
-				switch {
-				case err != nil:
-					return nil, err
-				case reused && p.ValidationStatus == "rejected":
-					log.Info("commit's pattern was rejected in review; not reused", "commit", c.SHA, "pattern", p.ID)
-					o.callResult(ctx, callID, fmt.Sprintf("pattern %d exists but was rejected in review; not used", p.ID), nil)
-				case slices.Contains(patterns, p.ID):
-					o.callResult(ctx, callID, fmt.Sprintf("pattern %d (already in this analysis)", p.ID), nil)
-				default:
-					patterns = append(patterns, p.ID)
-					prog.Patterns = patterns
-					if reused {
-						o.callResult(ctx, callID, fmt.Sprintf("pattern %d reused from an earlier analysis", p.ID), nil)
-					} else {
-						o.callResult(ctx, callID, fmt.Sprintf("pattern %d created", p.ID), nil)
-					}
-				}
+			id, result, err := o.patternFromAnswer(ctx, in, c, resp.JSON, patterns, log)
+			if err != nil {
+				return nil, err
 			}
+			if id != 0 {
+				patterns = append(patterns, id)
+				prog.Patterns = patterns
+			}
+			o.callResult(ctx, callID, result, nil)
 		}
 		if err := o.store.UpdateIntake(ctx, in.ID, o.owner, prog); err != nil {
 			return nil, err

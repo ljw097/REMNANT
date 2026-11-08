@@ -319,36 +319,11 @@ func (a *agent) system(base string) string {
 }
 
 func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cache map[int64]llm.Client) (*agent, error) {
-	enabled, override, cfg, err := j.o.store.AgentProfile(ctx, role)
-	if err != nil || !enabled {
-		return nil, err
-	}
-	callTokens := int64(j.settings.MaxCallTokens)
-	if cfg.MaxCallTokens > 0 {
-		callTokens = int64(cfg.MaxCallTokens)
-	}
-	if callTokens == 0 {
-		callTokens = int64(store.DefaultResearchSettings().MaxCallTokens)
-	}
-	profileID := runProfile
-	if override != nil {
-		profileID = override
-	}
-	if profileID == nil {
+	a, err := j.o.newAgent(ctx, role, runProfile, j.settings, cache)
+	if errors.Is(err, errNoProfile) {
 		return nil, fmt.Errorf("%s: the run has no LLM profile", role)
 	}
-	creds, err := j.o.store.LLMCredentials(ctx, *profileID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", role, err)
-	}
-	c, ok := cache[*profileID]
-	if !ok {
-		if c, err = j.o.opts.NewClient(creds); err != nil {
-			return nil, fmt.Errorf("%s: %w", role, err)
-		}
-		cache[*profileID] = c
-	}
-	return &agent{role: role, client: c, instructions: cfg.Instructions, maxCallTokens: callTokens, model: creds.Model}, nil
+	return a, err
 }
 
 var errBudget = errors.New("token budget exhausted")
@@ -536,17 +511,55 @@ func (j *job) mark(ctx context.Context, c candidate, outcome string) {
 }
 
 func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *budget, it workItem, stats *genStats) {
-	c := it.c
+	env, allowed := j.taskEnvelope(it.c)
+	var h drafted
+	if d := it.draft; d != nil {
+		h = drafted{id: d.ID, out: researcherOutput{
+			Title: d.Title, Claim: d.Claim, Facts: strs(d.Facts), Preconditions: strs(d.Preconditions), Unknowns: strs(d.Unknowns),
+			AffectedSymbols: strs(d.AffectedSymbols), ExpectedObservation: d.ExpectedObservation,
+			CounterEvidenceToCheck: strs(d.CounterEvidence), TriageConfidence: d.TriageConfidence,
+		}}
+	} else {
+		var ok bool
+		if h, ok = j.draft(ctx, researcher, b, it.c, env, allowed, stats); !ok {
+			return
+		}
+	}
+	if skeptic == nil {
+		j.toTriage(ctx, h.id)
+		return
+	}
+	j.challenge(ctx, skeptic, b, it.c, env, allowed, h, stats)
+}
+
+// drafted is a stored hypothesis and the Researcher's answer behind it.
+type drafted struct {
+	id  int64
+	out researcherOutput
+}
+
+// forSkeptic is the hypothesis as the Skeptic's envelope presents it.
+func (h drafted) forSkeptic() map[string]any {
+	o := h.out
+	return map[string]any{
+		"hypothesis_id": h.id, "title": o.Title, "claim": o.Claim, "facts": o.Facts,
+		"preconditions": o.Preconditions, "unknowns": o.Unknowns, "affected_symbols": o.AffectedSymbols,
+		"expected_observation": o.ExpectedObservation, "counter_evidence_to_check": o.CounterEvidenceToCheck,
+		"triage_confidence": o.TriageConfidence,
+	}
+}
+
+// taskEnvelope is the Researcher's task for one candidate region, and the
+// evidence the answer may cite.
+func (j *job) taskEnvelope(c candidate) (envelope, map[int64]evidenceView) {
 	ev := evidenceView{c.evidenceID, c.Chunk.Path, c.Chunk.Start, c.Chunk.End, c.Chunk.Symbol, c.SHA256, c.Excerpt}
-	allowed := map[int64]evidenceView{ev.EvidenceID: ev}
-	general := c.Pattern.ID == generalPatternID
 	env := envelope{
 		TaskID:       fmt.Sprintf("run-%d/evidence-%d", j.runID, c.evidenceID),
 		Target:       map[string]any{"target_id": c.TargetID, "revision": c.Revision, "language": c.Chunk.Language},
 		Capabilities: []string{"source.read", "evidence.read"},
 		Evidence:     []evidenceView{ev},
 	}
-	if general {
+	if c.Pattern.ID == generalPatternID {
 		env.Instructions = []string{
 			"No historical pattern applies: audit this region directly for a real security vulnerability of any class.",
 			fmt.Sprintf("It was selected because it contains %s; that is a reason to read it, not evidence of a defect.", strings.Join(c.Matched, ", ")),
@@ -563,115 +576,106 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 				"It also contains %s, which the original fix introduced: check whether that guard covers this sink.", strings.Join(c.Countered, ", ")))
 		}
 	}
+	return env, map[int64]evidenceView{ev.EvidenceID: ev}
+}
 
-	var hypID int64
-	var hypothesis map[string]any
-	var researcherConfidence string
-	if d := it.draft; d != nil {
-		hypID, researcherConfidence = d.ID, d.TriageConfidence
-		hypothesis = map[string]any{
-			"hypothesis_id": d.ID, "title": d.Title, "claim": d.Claim, "facts": d.Facts,
-			"preconditions": d.Preconditions, "unknowns": d.Unknowns, "affected_symbols": d.AffectedSymbols,
-			"expected_observation": d.ExpectedObservation, "counter_evidence_to_check": d.CounterEvidence,
-			"triage_confidence": d.TriageConfidence,
+// draft asks the Researcher about one region and stores the hypothesis it
+// proposes. ok is false when there is nothing for the Skeptic to challenge;
+// the region's outcome is recorded either way.
+func (j *job) draft(ctx context.Context, researcher *agent, b *budget, c candidate, env envelope, allowed map[int64]evidenceView, stats *genStats) (h drafted, ok bool) {
+	general := c.Pattern.ID == generalPatternID
+	sys := researcherSystem
+	if general {
+		sys = researcherGeneralSystem
+	}
+	raw, callID, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema,
+		callRef{Subject: fmt.Sprintf("%s:%d-%d", c.Chunk.Path, c.Chunk.Start, c.Chunk.End), EvidenceID: &c.evidenceID})
+	if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
+		if kind == "refused" {
+			j.mark(ctx, c, "refused")
 		}
-	} else {
-		sys := researcherSystem
-		if general {
-			sys = researcherGeneralSystem
-		}
-		raw, callID, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema,
-			callRef{Subject: fmt.Sprintf("%s:%d-%d", c.Chunk.Path, c.Chunk.Start, c.Chunk.End), EvidenceID: &c.evidenceID})
-		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
-			if kind == "refused" {
-				j.mark(ctx, c, "refused")
-			}
-			j.o.callResult(ctx, callID, failedResult(kind, err), nil)
-			return
-		}
-		out, err := parseResearcher(raw, allowed)
-		if err != nil {
+		j.o.callResult(ctx, callID, failedResult(kind, err), nil)
+		return h, false
+	}
+	out, err := parseResearcher(raw, allowed)
+	if err != nil {
+		stats.add(func(s *genStats) { s.invalid++ })
+		j.mark(ctx, c, "invalid")
+		j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
+		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
+			map[string]any{"evidence_id": c.evidenceID})
+		return h, false
+	}
+	if !out.Found {
+		stats.add(func(s *genStats) { s.declined++ })
+		j.mark(ctx, c, "declined")
+		j.o.callResult(ctx, callID, "declined: no credible hypothesis", nil)
+		return h, false
+	}
+	patternID := c.Pattern.ID
+	var patternRef *int64 // general-mode hypotheses have no originating pattern
+	if !general {
+		patternRef = &patternID
+	}
+	dedupe := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%s|%d", c.TargetID, patternID, c.Chunk.Path, c.Chunk.Symbol, c.Chunk.Start)))
+	// InsertHypothesis also marks the candidate, in the same transaction.
+	id, err := j.o.store.InsertHypothesis(ctx, j.runID, store.HypothesisInput{
+		TargetID: c.TargetID, PatternID: patternRef, Title: out.Title, Claim: out.Claim,
+		VulnerabilityClass: out.VulnerabilityClass, CWEID: out.CWEID, Facts: out.Facts,
+		Preconditions: out.Preconditions, Unknowns: out.Unknowns, AffectedSymbols: out.AffectedSymbols,
+		ExpectedObservation: out.ExpectedObservation, CounterEvidence: out.CounterEvidenceToCheck,
+		TriageConfidence: out.TriageConfidence, DedupeKey: hex.EncodeToString(dedupe[:]),
+	}, out.SupportingEvidenceIDs)
+	switch {
+	case errors.Is(err, store.ErrDuplicate):
+		stats.add(func(s *genStats) { s.duplicate++ })
+		j.mark(ctx, c, "duplicate")
+		j.o.callResult(ctx, callID, "duplicate of an existing hypothesis", nil)
+		return h, false
+	case err != nil:
+		if ctx.Err() == nil {
 			stats.add(func(s *genStats) { s.invalid++ })
 			j.mark(ctx, c, "invalid")
-			j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
-			j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
-				map[string]any{"evidence_id": c.evidenceID})
-			return
+			j.o.callResult(ctx, callID, "hypothesis not stored: "+err.Error(), nil)
+			j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
 		}
-		if !out.Found {
-			stats.add(func(s *genStats) { s.declined++ })
-			j.mark(ctx, c, "declined")
-			j.o.callResult(ctx, callID, "declined: no credible hypothesis", nil)
-			return
-		}
-		patternID := c.Pattern.ID
-		var patternRef *int64 // general-mode hypotheses have no originating pattern
-		if !general {
-			patternRef = &patternID
-		}
-		dedupe := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%s|%d", c.TargetID, patternID, c.Chunk.Path, c.Chunk.Symbol, c.Chunk.Start)))
-		// InsertHypothesis also marks the candidate, in the same transaction.
-		hypID, err = j.o.store.InsertHypothesis(ctx, j.runID, store.HypothesisInput{
-			TargetID: c.TargetID, PatternID: patternRef, Title: out.Title, Claim: out.Claim,
-			VulnerabilityClass: out.VulnerabilityClass, CWEID: out.CWEID, Facts: out.Facts,
-			Preconditions: out.Preconditions, Unknowns: out.Unknowns, AffectedSymbols: out.AffectedSymbols,
-			ExpectedObservation: out.ExpectedObservation, CounterEvidence: out.CounterEvidenceToCheck,
-			TriageConfidence: out.TriageConfidence, DedupeKey: hex.EncodeToString(dedupe[:]),
-		}, out.SupportingEvidenceIDs)
-		switch {
-		case errors.Is(err, store.ErrDuplicate):
-			stats.add(func(s *genStats) { s.duplicate++ })
-			j.mark(ctx, c, "duplicate")
-			j.o.callResult(ctx, callID, "duplicate of an existing hypothesis", nil)
-			return
-		case err != nil:
-			if ctx.Err() == nil {
-				stats.add(func(s *genStats) { s.invalid++ })
-				j.mark(ctx, c, "invalid")
-				j.o.callResult(ctx, callID, "hypothesis not stored: "+err.Error(), nil)
-				j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
-			}
-			return
-		}
-		stats.add(func(s *genStats) { s.created++ })
-		j.o.callResult(ctx, callID, fmt.Sprintf("hypothesis %d drafted", hypID), &hypID)
-		researcherConfidence = out.TriageConfidence
-		hypothesis = map[string]any{
-			"hypothesis_id": hypID, "title": out.Title, "claim": out.Claim, "facts": out.Facts,
-			"preconditions": out.Preconditions, "unknowns": out.Unknowns, "affected_symbols": out.AffectedSymbols,
-			"expected_observation": out.ExpectedObservation, "counter_evidence_to_check": out.CounterEvidenceToCheck,
-			"triage_confidence": out.TriageConfidence,
-		}
+		return h, false
 	}
+	stats.add(func(s *genStats) { s.created++ })
+	j.o.callResult(ctx, callID, fmt.Sprintf("hypothesis %d drafted", id), &id)
+	return drafted{id: id, out: out}, true
+}
 
-	if skeptic == nil {
-		j.toTriage(ctx, hypID)
-		return
-	}
-	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, hypID)
-	env.Hypothesis = hypothesis
+// challenge has the Skeptic try to refute a drafted hypothesis and records
+// its verdict, counter-evidence and the adjusted triage priority. A hypothesis
+// whose challenge fails goes to triage unchallenged; one interrupted by a
+// stop or the budget stays a draft and is challenged when the run resumes.
+func (j *job) challenge(ctx context.Context, skeptic *agent, b *budget, c candidate, env envelope, allowed map[int64]evidenceView, h drafted, stats *genStats) {
+	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, h.id)
+	env.Hypothesis = h.forSkeptic()
 	env.Instructions = []string{"Challenge this hypothesis using only the cited excerpt. Check counter_evidence_to_check first."}
 	raw, callID, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema,
-		callRef{Subject: fmt.Sprintf("hypothesis %d", hypID), EvidenceID: &c.evidenceID, HypothesisID: &hypID})
+		callRef{Subject: fmt.Sprintf("hypothesis %d", h.id), EvidenceID: &c.evidenceID, HypothesisID: &h.id})
 	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
 	case "":
 	case "stopped", "budget":
 		j.o.callResult(ctx, callID, failedResult(kind, err), nil)
-		return // stays a draft; challenged when the run resumes
+		return
 	default:
 		j.o.callResult(ctx, callID, failedResult(kind, err)+"; the hypothesis went to triage unchallenged", nil)
-		j.toTriage(ctx, hypID)
+		j.toTriage(ctx, h.id)
 		return
 	}
 	sk, err := parseSkeptic(raw, allowed)
 	if err != nil {
 		stats.add(func(s *genStats) { s.invalid++ })
 		j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
-		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Skeptic answer for hypothesis %d rejected: %v", hypID, err),
-			map[string]any{"hypothesis_id": hypID})
-		j.toTriage(ctx, hypID)
+		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Skeptic answer for hypothesis %d rejected: %v", h.id, err),
+			map[string]any{"hypothesis_id": h.id})
+		j.toTriage(ctx, h.id)
 		return
 	}
+	ev := allowed[c.evidenceID]
 	counter := make([]string, 0, len(sk.CounterEvidence))
 	var counterEv []store.EvidenceInput
 	for _, ce := range sk.CounterEvidence {
@@ -686,10 +690,10 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	}
 	counterEv = append(counterEv, store.EvidenceInput{TargetID: c.TargetID, Kind: "counter_evidence", Revision: c.Revision,
 		Summary: "Skeptic rationale (" + sk.Verdict + "): " + sk.Rationale, Metadata: map[string]any{"agent": roleSkeptic}})
-	conf := finalConfidence(researcherConfidence, sk.Verdict, sk.AdjustedConfidence)
+	conf := finalConfidence(h.out.TriageConfidence, sk.Verdict, sk.AdjustedConfidence)
 	j.o.callResult(ctx, callID, fmt.Sprintf("verdict %s; priority %s", sk.Verdict, conf), nil)
-	if err := j.o.store.RecordSkeptic(ctx, j.runID, hypID, sk.Verdict, conf, counter, counterEv); err != nil && ctx.Err() == nil {
-		j.log.Error("record skeptic", "hypothesis", hypID, "err", err)
+	if err := j.o.store.RecordSkeptic(ctx, j.runID, h.id, sk.Verdict, conf, counter, counterEv); err != nil && ctx.Err() == nil {
+		j.log.Error("record skeptic", "hypothesis", h.id, "err", err)
 	}
 }
 
