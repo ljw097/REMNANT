@@ -1269,6 +1269,33 @@ func TestRepositoryIntake(t *testing.T) {
 		t.Fatalf("hypotheses %+v", hs)
 	}
 
+	// Every model call is in the call log, linked to what it produced.
+	hc, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{IntakeID: &in.ID})
+	must(t, err)
+	if len(hc) != 1 || hc[0].Role != roleHistorian || hc[0].CommitSHA != recs[0].SHA || hc[0].Outcome != "ok" ||
+		hc[0].Result != fmt.Sprintf("pattern %d created", p.ID) || hc[0].OutputTokens != 200 {
+		t.Fatalf("historian call log %+v", hc)
+	}
+	full, err := e.st.GetModelCall(e.ctx, hc[0].ID)
+	must(t, err)
+	if !strings.Contains(full.Request, recs[0].SHA) || len(full.Response) == 0 {
+		t.Fatalf("historian call body: request %d bytes, response %s", len(full.Request), full.Response)
+	}
+	byHyp, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{HypothesisID: &hs[0].ID})
+	must(t, err)
+	roles := map[string]string{}
+	for _, c := range byHyp {
+		roles[c.Role] = c.Result
+	}
+	if roles[roleResearcher] != fmt.Sprintf("hypothesis %d drafted", hs[0].ID) || !strings.HasPrefix(roles[roleSkeptic], "verdict ") {
+		t.Fatalf("hypothesis call log %+v", byHyp)
+	}
+	runCalls, err := e.st.ListModelCalls(e.ctx, store.ModelCallFilter{RunID: in.RunID})
+	must(t, err)
+	if len(runCalls) < 2 || runCalls[0].Request != "" {
+		t.Fatalf("run call log %+v", runCalls)
+	}
+
 	// Analysing the same repository again reuses the pattern mined from the
 	// same fix commit instead of failing on its uniqueness.
 	again, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser again",

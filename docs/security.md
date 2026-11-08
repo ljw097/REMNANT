@@ -34,6 +34,7 @@ The web UI is served with a strict Content-Security-Policy (same-origin scripts,
 - A model client is built from its stored profile only: `ANTHROPIC_*` variables in the server environment are ignored, so they cannot redirect a profile's key to another endpoint.
 - The master key is never stored in the database. Losing it makes stored keys unrecoverable; re-enter them.
 - Rotation: an administrator replaces a profile's key in Settings → Model profiles (`PATCH /llm-profiles/{id}` with `api_key`); the old sealed key is overwritten. "Test connection" (`POST /llm-profiles/{id}/test`, or `/llm-profiles/test` for unsaved settings) looks the model up at the provider with the key — it spends no tokens and returns only success or the HTTP reason, never key material. A profile cannot be deleted while a project, agent or unfinished run uses it.
+- The call log (`model_calls`) keeps each agent call's task envelope and answer so people can audit them. It holds no key material (keys travel only in request headers), and no system prompt; the envelope contains the same repository excerpts and commit text the evidence and commit records already store, and it is readable by any signed-in user, like runs. The repository text inside it stays untrusted data and is shown as text, never rendered as HTML.
 - Agent instructions set by administrators are appended to an agent's system prompt after REMNANT's rules, under a heading that says they cannot override them; the model's output is still schema-validated and evidence-checked as before.
 
 ## Source handling

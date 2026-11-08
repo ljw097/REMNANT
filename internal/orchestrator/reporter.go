@@ -185,13 +185,13 @@ func (j *job) writeNarrative(ctx context.Context, rep store.RunReport, repo stri
 		j.log.Warn("reporter: client", "err", err)
 		return nil
 	}
-	a := &agent{role: roleReporter, client: client, instructions: cfg.Instructions, maxCallTokens: int64(j.settings.MaxCallTokens)}
+	a := &agent{role: roleReporter, client: client, instructions: cfg.Instructions, maxCallTokens: int64(j.settings.MaxCallTokens), model: creds.Model}
 	if cfg.MaxCallTokens > 0 {
 		a.maxCallTokens = int64(cfg.MaxCallTokens)
 	}
 	env := buildReporterEnvelope(j.runID, repo, rep, hs)
-	resp, err := a.client.CompleteJSON(ctx, llm.Request{AgentKey: roleReporter, System: a.system(reporterSystem),
-		Input: env.render(), Schema: reporterSchema, MaxTokens: a.maxCallTokens})
+	resp, callID, err := j.o.complete(ctx, a, callRef{RunID: &j.runID, Subject: fmt.Sprintf("report for %d finding(s)", len(hs))},
+		llm.Request{AgentKey: roleReporter, System: a.system(reporterSystem), Input: env.render(), Schema: reporterSchema, MaxTokens: a.maxCallTokens})
 	if resp.InputTokens+resp.OutputTokens > 0 {
 		bg, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if uerr := j.o.store.AddTokenUsage(bg, j.runID, resp.InputTokens, resp.OutputTokens); uerr != nil {
@@ -201,13 +201,16 @@ func (j *job) writeNarrative(ctx context.Context, rep store.RunReport, repo stri
 	}
 	if err != nil {
 		j.log.Warn("reporter: call failed; using the deterministic report", "err", err)
+		j.o.callResult(ctx, callID, "call failed; the deterministic report was used", nil)
 		return nil
 	}
 	var out reporterOutput
 	if err := json.Unmarshal(resp.JSON, &out); err != nil || strings.TrimSpace(out.ExecutiveSummary) == "" {
 		j.log.Warn("reporter: answer unusable; using the deterministic report", "err", err)
+		j.o.callResult(ctx, callID, "answer unusable; the deterministic report was used", nil)
 		return nil
 	}
+	j.o.callResult(ctx, callID, "narrative report written", nil)
 	return &out
 }
 

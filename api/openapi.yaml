@@ -471,6 +471,53 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Artifact' } }
 
+  /runs/{id}/model-calls:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Every model call the run made (without prompt and answer bodies)
+      responses:
+        '200': { description: Calls, oldest first, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ModelCall' } } } } }
+
+  /runs/{id}/candidates:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Source regions the run selected for review
+      description: metadata carries score, matched and countered signatures, pattern_id and outcome (declined, invalid, duplicate, refused; absent until examined or when a hypothesis was drafted).
+      responses:
+        '200': { description: Regions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Evidence' } } } } }
+
+  /hypotheses/{id}/model-calls:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Model calls that drafted or challenged a hypothesis
+      responses:
+        '200': { description: Calls, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ModelCall' } } } } }
+
+  /intakes/{id}/model-calls:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Historian calls of a repository intake, one per commit read
+      responses:
+        '200': { description: Calls, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ModelCall' } } } } }
+
+  /intakes/{id}/commits/{sha}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+      - { name: sha, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{7,64}$' } }
+    get:
+      summary: One recorded commit of the intake's repository, with its diff
+      responses:
+        '200': { description: Commit, content: { application/json: { schema: { $ref: '#/components/schemas/CommitRecord' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /model-calls/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: One model call with its prompt envelope and answer
+      responses:
+        '200': { description: Call, content: { application/json: { schema: { $ref: '#/components/schemas/ModelCall' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+
   /hypotheses/{id}:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
@@ -1264,6 +1311,29 @@ components:
         error_summary: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ModelCall:
+      type: object
+      description: One agent call. request (the prompt envelope; the system prompt is not stored) and response are returned only by GET /model-calls/{id}.
+      properties:
+        id: { type: integer }
+        run_id: { type: integer, nullable: true }
+        intake_id: { type: integer, nullable: true }
+        role: { type: string, enum: [hypothesis_researcher, skeptic, reporter, historian] }
+        subject: { type: string }
+        evidence_id: { type: integer, nullable: true }
+        hypothesis_id: { type: integer, nullable: true }
+        commit_sha: { type: string }
+        model: { type: string }
+        max_tokens: { type: integer }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        duration_ms: { type: integer }
+        outcome: { type: string, enum: [ok, refused, truncated, error, stopped] }
+        result: { type: string, description: What REMNANT made of the answer }
+        error: { type: string }
+        request: { type: string }
+        response: { nullable: true }
+        created_at: { type: string, format: date-time }
     CommitRecord:
       type: object
       properties:

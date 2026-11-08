@@ -350,7 +350,7 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 	if err != nil {
 		return nil, err
 	}
-	a := &agent{role: roleHistorian, client: client, instructions: cfg.Instructions, maxCallTokens: int64(settings.MaxCallTokens)}
+	a := &agent{role: roleHistorian, client: client, instructions: cfg.Instructions, maxCallTokens: int64(settings.MaxCallTokens), model: creds.Model}
 	if cfg.MaxCallTokens > 0 {
 		a.maxCallTokens = int64(cfg.MaxCallTokens)
 	}
@@ -378,8 +378,8 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 			log.Info("historian token budget exhausted", "read", i)
 			break
 		}
-		resp, callErr := a.client.CompleteJSON(ctx, llm.Request{AgentKey: roleHistorian, System: a.system(historianSystem),
-			Input: env.render(), Schema: historianSchema, MaxTokens: grant})
+		resp, callID, callErr := o.complete(ctx, a, callRef{IntakeID: &in.ID, Subject: c.Subject, CommitSHA: c.SHA},
+			llm.Request{AgentKey: roleHistorian, System: a.system(historianSystem), Input: env.render(), Schema: historianSchema, MaxTokens: grant})
 		b.settle(grant, resp.OutputTokens)
 		next := i + 1
 		prog := store.IntakeProgress{CommitsRead: &next, InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens}
@@ -390,6 +390,7 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 			var refusal *llm.RefusalError
 			if errors.As(callErr, &refusal) {
 				answered++
+				o.callResult(ctx, callID, "refused by the model; commit skipped", nil)
 				log.Warn("historian refused a commit", "commit", c.SHA, "err", callErr)
 			} else {
 				failed++
@@ -397,14 +398,21 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 					firstErr = callErr
 				}
 				log.Warn("historian call failed; skipping the commit", "commit", c.SHA, "err", callErr)
+				o.callResult(ctx, callID, "call failed; commit skipped", nil)
 			}
 		} else {
 			answered++
 			var out historianOutput
 			if err := json.Unmarshal(resp.JSON, &out); err != nil {
 				log.Warn("historian answer is not valid", "commit", c.SHA, "err", err)
+				o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
 			} else if pin, err := minedPattern(out, c, in.SourceURI); err != nil {
 				log.Info("commit not turned into a pattern", "commit", c.SHA, "reason", err.Error())
+				result := "no pattern: " + err.Error()
+				if out.Reason != "" {
+					result += " — " + out.Reason
+				}
+				o.callResult(ctx, callID, result, nil)
 			} else {
 				by := int64(0)
 				if in.CreatedBy != nil {
@@ -416,10 +424,17 @@ func (o *Orchestrator) mine(ctx context.Context, in store.Intake, patterns []int
 					return nil, err
 				case reused && p.ValidationStatus == "rejected":
 					log.Info("commit's pattern was rejected in review; not reused", "commit", c.SHA, "pattern", p.ID)
+					o.callResult(ctx, callID, fmt.Sprintf("pattern %d exists but was rejected in review; not used", p.ID), nil)
 				case slices.Contains(patterns, p.ID):
+					o.callResult(ctx, callID, fmt.Sprintf("pattern %d (already in this analysis)", p.ID), nil)
 				default:
 					patterns = append(patterns, p.ID)
 					prog.Patterns = patterns
+					if reused {
+						o.callResult(ctx, callID, fmt.Sprintf("pattern %d reused from an earlier analysis", p.ID), nil)
+					} else {
+						o.callResult(ctx, callID, fmt.Sprintf("pattern %d created", p.ID), nil)
+					}
 				}
 			}
 		}

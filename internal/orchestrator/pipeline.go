@@ -305,6 +305,8 @@ type agent struct {
 	instructions string
 	// maxCallTokens caps one call.
 	maxCallTokens int64
+	// model names the model, for the call log.
+	model string
 }
 
 // system is the role's system prompt plus the administrator's
@@ -335,31 +337,32 @@ func (j *job) agentFor(ctx context.Context, role string, runProfile *int64, cach
 	if profileID == nil {
 		return nil, fmt.Errorf("%s: the run has no LLM profile", role)
 	}
-	if c, ok := cache[*profileID]; ok {
-		return &agent{role, c, cfg.Instructions, callTokens}, nil
-	}
 	creds, err := j.o.store.LLMCredentials(ctx, *profileID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", role, err)
 	}
-	c, err := j.o.opts.NewClient(creds)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", role, err)
+	c, ok := cache[*profileID]
+	if !ok {
+		if c, err = j.o.opts.NewClient(creds); err != nil {
+			return nil, fmt.Errorf("%s: %w", role, err)
+		}
+		cache[*profileID] = c
 	}
-	cache[*profileID] = c
-	return &agent{role, c, cfg.Instructions, callTokens}, nil
+	return &agent{role: role, client: c, instructions: cfg.Instructions, maxCallTokens: callTokens, model: creds.Model}, nil
 }
 
 var errBudget = errors.New("token budget exhausted")
 
 // call makes one budgeted model call and records token usage.
-func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any) ([]byte, error) {
+// The call is recorded in the call log; its ID is returned for callResult.
+func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env envelope, schema map[string]any, ref callRef) ([]byte, int64, error) {
 	grant := b.reserve(a.maxCallTokens)
 	if grant == 0 {
-		return nil, errBudget
+		return nil, 0, errBudget
 	}
 	env.Role = a.role
-	resp, err := a.client.CompleteJSON(ctx, llm.Request{
+	ref.RunID = &j.runID
+	resp, callID, err := j.o.complete(ctx, a, ref, llm.Request{
 		AgentKey: a.role, System: system, Input: env.render(), Schema: schema, MaxTokens: grant,
 	})
 	b.settle(grant, resp.OutputTokens)
@@ -368,7 +371,7 @@ func (j *job) call(ctx context.Context, a *agent, b *budget, system string, env 
 			err = uerr
 		}
 	}
-	return resp.JSON, err
+	return resp.JSON, callID, err
 }
 
 // genStats counts per-candidate outcomes across concurrent workers.
@@ -573,7 +576,8 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		if general {
 			sys = researcherGeneralSystem
 		}
-		raw, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema)
+		raw, callID, err := j.call(ctx, researcher, b, researcher.system(sys), env, researcherSchema,
+			callRef{Subject: fmt.Sprintf("%s:%d-%d", c.Chunk.Path, c.Chunk.Start, c.Chunk.End), EvidenceID: &c.evidenceID})
 		if kind := j.callFailed(ctx, err, c, "researcher", stats); kind != "" {
 			if kind == "refused" {
 				j.mark(ctx, c, "refused")
@@ -584,6 +588,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		if err != nil {
 			stats.add(func(s *genStats) { s.invalid++ })
 			j.mark(ctx, c, "invalid")
+			j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
 			j.event(ctx, "agent.invalid_output", fmt.Sprintf("Researcher answer for evidence %d rejected: %v", c.evidenceID, err),
 				map[string]any{"evidence_id": c.evidenceID})
 			return
@@ -591,6 +596,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		if !out.Found {
 			stats.add(func(s *genStats) { s.declined++ })
 			j.mark(ctx, c, "declined")
+			j.o.callResult(ctx, callID, "declined: no credible hypothesis", nil)
 			return
 		}
 		patternID := c.Pattern.ID
@@ -611,16 +617,19 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 		case errors.Is(err, store.ErrDuplicate):
 			stats.add(func(s *genStats) { s.duplicate++ })
 			j.mark(ctx, c, "duplicate")
+			j.o.callResult(ctx, callID, "duplicate of an existing hypothesis", nil)
 			return
 		case err != nil:
 			if ctx.Err() == nil {
 				stats.add(func(s *genStats) { s.invalid++ })
 				j.mark(ctx, c, "invalid")
+				j.o.callResult(ctx, callID, "hypothesis not stored: "+err.Error(), nil)
 				j.event(ctx, "agent.invalid_output", fmt.Sprintf("Hypothesis for evidence %d not stored: %v", c.evidenceID, err), nil)
 			}
 			return
 		}
 		stats.add(func(s *genStats) { s.created++ })
+		j.o.callResult(ctx, callID, fmt.Sprintf("hypothesis %d drafted", hypID), &hypID)
 		researcherConfidence = out.TriageConfidence
 		hypothesis = map[string]any{
 			"hypothesis_id": hypID, "title": out.Title, "claim": out.Claim, "facts": out.Facts,
@@ -637,7 +646,8 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	env.TaskID = fmt.Sprintf("run-%d/hypothesis-%d", j.runID, hypID)
 	env.Hypothesis = hypothesis
 	env.Instructions = []string{"Challenge this hypothesis using only the cited excerpt. Check counter_evidence_to_check first."}
-	raw, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema)
+	raw, callID, err := j.call(ctx, skeptic, b, skeptic.system(skepticSystem), env, skepticSchema,
+		callRef{Subject: fmt.Sprintf("hypothesis %d", hypID), EvidenceID: &c.evidenceID, HypothesisID: &hypID})
 	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
 	case "":
 	case "stopped", "budget":
@@ -649,6 +659,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	sk, err := parseSkeptic(raw, allowed)
 	if err != nil {
 		stats.add(func(s *genStats) { s.invalid++ })
+		j.o.callResult(ctx, callID, "invalid answer: "+err.Error(), nil)
 		j.event(ctx, "agent.invalid_output", fmt.Sprintf("Skeptic answer for hypothesis %d rejected: %v", hypID, err),
 			map[string]any{"hypothesis_id": hypID})
 		j.toTriage(ctx, hypID)
@@ -669,6 +680,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	counterEv = append(counterEv, store.EvidenceInput{TargetID: c.TargetID, Kind: "counter_evidence", Revision: c.Revision,
 		Summary: "Skeptic rationale (" + sk.Verdict + "): " + sk.Rationale, Metadata: map[string]any{"agent": roleSkeptic}})
 	conf := finalConfidence(researcherConfidence, sk.Verdict, sk.AdjustedConfidence)
+	j.o.callResult(ctx, callID, fmt.Sprintf("verdict %s; priority %s", sk.Verdict, conf), nil)
 	if err := j.o.store.RecordSkeptic(ctx, j.runID, hypID, sk.Verdict, conf, counter, counterEv); err != nil && ctx.Err() == nil {
 		j.log.Error("record skeptic", "hypothesis", hypID, "err", err)
 	}

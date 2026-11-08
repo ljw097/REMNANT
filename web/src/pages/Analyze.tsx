@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { Frame } from "../App";
 import { post } from "../api/client";
-import type { Intake, IntakeDetail, IntakeOptions, LLMProfile, Pattern, Project } from "../api/types";
+import type { Intake, IntakeDetail, IntakeOptions, LLMProfile, ModelCall, Pattern, Project } from "../api/types";
 import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Link, navigate, useLocation } from "../router";
@@ -17,6 +17,7 @@ import { useSession } from "../session";
 import { Alert, Button, Empty, errorText, Field, Hash, PageHead, Panel, SkeletonRows, Time } from "../ui/components";
 import { Icon, type IconName } from "../ui/Icon";
 import { ConnectModel } from "../ui/QuickStart";
+import { CallOutcome, CommitDrawer, ModelCallDrawer, ModelCalls } from "../ui/Details";
 
 interface IntakeConfig {
   repo_hosts: string[];
@@ -329,6 +330,13 @@ export function IntakePage({ id }: { id: number }) {
   const patterns = useApi<Pattern[]>("/patterns");
   const d = q.data;
   const i = d?.intake;
+  const busy = !i || i.status === "fetching" || i.status === "mining";
+  const calls = useApi<ModelCall[]>(`/intakes/${id}/model-calls`, busy ? 2000 : undefined);
+  const callFor = (sha: string) => (calls.data ?? []).find((c) => c.commit_sha === sha);
+  const [commit, setCommit] = useState<string | null>(null);
+  const [openCall, setOpenCall] = useState<number | null>(null);
+  const jump = (target: string) => document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const stepTarget: Record<string, string> = { history: "intake-commits", patterns: "intake-calls", hunt: "" , fetch: "intake-commits" };
   const steps: { key: string; icon: IconName; state: "done" | "active" | "todo" | "failed" | "skipped"; detail: React.ReactNode }[] = i
     ? [
         {
@@ -391,7 +399,13 @@ export function IntakePage({ id }: { id: number }) {
                     <Icon name={s.state === "done" ? "check" : s.state === "failed" ? "x" : s.icon} size={14} />
                   </span>
                   <span className="stack" style={{ gap: 2 }}>
-                    <strong>{t(`analyze.step.${s.key}` as Key)}</strong>
+                    {stepTarget[s.key] ? (
+                      <button type="button" className="linkish" title={t("detail.intake.jump")} onClick={() => jump(stepTarget[s.key]!)}>
+                        <strong>{t(`analyze.step.${s.key}` as Key)}</strong>
+                      </button>
+                    ) : (
+                      <strong>{t(`analyze.step.${s.key}` as Key)}</strong>
+                    )}
                     <span className="small ink-2">{s.detail}</span>
                   </span>
                 </li>
@@ -426,38 +440,52 @@ export function IntakePage({ id }: { id: number }) {
               )}
             </Panel>
           ) : null}
-          {d.commits.length > 0 ? (
-            <Panel title={t("intake.commits")} meta={t("intake.commitsSub", { n: d.commits.length })}>
-              <ul className="item-list">
-                {d.commits.map((c, idx) => (
-                  <li key={c.id}>
-                    <div>
-                      <span className="t" style={{ whiteSpace: "normal" }}>
-                        {c.subject}
-                      </span>
-                      {idx < i.commits_read ? (
-                        <span className="state" data-tone="info" data-form="solid">
-                          {t("intake.read")}
-                        </span>
-                      ) : (
-                        <span />
-                      )}
-                      <span className="m">
-                        <span className="mono">{c.sha.slice(0, 12)}</span>
-                        <Time iso={c.committed_at} />
-                        {c.signals.map((s) => (
-                          <span key={s} className="chip">
-                            {t(`signal.${s}` as Key)}
-                          </span>
-                        ))}
-                        <span className="mono small">{c.files.slice(0, 3).join(", ")}{c.files.length > 3 ? ` +${c.files.length - 3}` : ""}</span>
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+          <section id="intake-calls">
+            <Panel title={t("detail.intake.calls")} meta={t("detail.intake.callsSub")}>
+              <ModelCalls path={`/intakes/${id}/model-calls`} poll={busy ? 3000 : undefined} empty={t("detail.intake.noCalls")} />
             </Panel>
+          </section>
+          {d.commits.length > 0 ? (
+            <section id="intake-commits">
+              <Panel title={t("intake.commits")} meta={t("intake.commitsSub", { n: d.commits.length })}>
+                <p className="small muted" style={{ padding: "10px var(--pad) 0" }}>{t("detail.intake.commitHint")}</p>
+                <ul className="item-list">
+                  {d.commits.map((c) => {
+                    const call = callFor(c.sha);
+                    return (
+                      <li key={c.id}>
+                        <a
+                          href={`#${c.sha}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCommit(c.sha);
+                          }}
+                        >
+                          <span className="t" style={{ whiteSpace: "normal" }}>
+                            {c.subject}
+                          </span>
+                          {call ? <CallOutcome outcome={call.outcome} /> : <span className="small muted">{t("detail.commit.notRead")}</span>}
+                          <span className="m">
+                            <span className="mono">{c.sha.slice(0, 12)}</span>
+                            <Time iso={c.committed_at} />
+                            {c.signals.map((sg) => (
+                              <span key={sg} className="detail-tag">
+                                {t(`signal.${sg}` as Key)}
+                              </span>
+                            ))}
+                            <span className="mono small">{c.files.slice(0, 3).join(", ")}{c.files.length > 3 ? ` +${c.files.length - 3}` : ""}</span>
+                            {call?.result ? <span className="small">→ {call.result}</span> : null}
+                          </span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
+            </section>
           ) : null}
+          <CommitDrawer intakeId={id} sha={commit} calls={calls.data ?? []} onClose={() => setCommit(null)} onOpenCall={(cid) => { setCommit(null); setOpenCall(cid); }} />
+          <ModelCallDrawer id={openCall} onClose={() => setOpenCall(null)} />
         </div>
       )}
     </Frame>

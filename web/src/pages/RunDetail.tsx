@@ -10,11 +10,12 @@ import type { Artifact, Experiment, Hypothesis, LLMProfile, Project, RunDetail, 
 import { Button, ConfirmButton, Empty, ErrorNote, errorText, Hash, Panel, Priority, Ref, SkeletonRows, State, Tabs, Time, useToast } from "../ui/components";
 import { DocHeader, PolicyList, SectionTitle, StageLine } from "../ui/domain";
 import { ReportView } from "../ui/ReportView";
+import { Candidates, EventLog, ModelCalls, StageDrawer } from "../ui/Details";
 import { Icon } from "../ui/Icon";
 import { ColumnPicker, useColumns } from "../ui/ColumnPicker";
 import { experimentLook, hypothesisLook, pausableRun, runLook, terminalRun } from "../ui/status";
 
-type Tab = "report" | "hypotheses" | "experiments" | "activity" | "artifacts";
+type Tab = "report" | "hypotheses" | "experiments" | "activity" | "artifacts" | "regions" | "calls";
 
 export function RunDetailPage({ id }: { id: number }) {
   const { t, num, duration } = useI18n();
@@ -34,6 +35,11 @@ export function RunDetailPage({ id }: { id: number }) {
   const [stream, setStream] = useState<"live" | "reconnecting" | "ended">("live");
   const seen = useRef(new Set<number>());
   const [busy, setBusy] = useState<string>();
+  const [stage, setStage] = useState<string | null>(null);
+  const goTab = (x: Tab) => {
+    setTab(x);
+    requestAnimationFrame(() => document.getElementById("run-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
   // Live timeline. A status change also refreshes the run and its lists.
   useEffect(() => {
@@ -153,8 +159,16 @@ export function RunDetailPage({ id }: { id: number }) {
             { label: t("run.field.scope"), value: <Hash value={r.scope_hash} /> },
             { label: t("run.field.model"), value: profile ? `${profile.name} · ${profile.model}` : "—" },
             { label: t("run.field.queued"), value: <Time iso={r.queued_at} abs /> },
-            { label: t("run.field.tokens"), value: <span className="num">{t("run.tokensValue", { o: num(r.output_tokens), l: num(r.limits.max_tokens), i: num(r.input_tokens) })}</span> },
-            { label: t("run.field.active"), value: <span className="num">{t("run.activeValue", { a: duration(r.active_ms), l: duration(r.limits.wall_seconds * 1000) })}</span> },
+            { label: t("run.field.tokens"), value: (
+                <button type="button" className="linkish num" title={t("detail.open.calls")} onClick={() => goTab("calls")}>
+                  {t("run.tokensValue", { o: num(r.output_tokens), l: num(r.limits.max_tokens), i: num(r.input_tokens) })}
+                </button>
+              ) },
+            { label: t("run.field.active"), value: (
+                <button type="button" className="linkish num" title={t("detail.open.activity")} onClick={() => goTab("activity")}>
+                  {t("run.activeValue", { a: duration(r.active_ms), l: duration(r.limits.wall_seconds * 1000) })}
+                </button>
+              ) },
             ...(r.attempts || r.resume_stage
               ? [{ label: t("run.field.recovery"), value: t("run.recoveryValue", { n: r.attempts, stage: r.resume_stage ? t(`stage.${r.resume_stage}` as Key) : "—" }) }]
               : []),
@@ -168,11 +182,12 @@ export function RunDetailPage({ id }: { id: number }) {
           </div>
         ) : null}
 
-        {hyps.data && hyps.data.length === 0 ? <WhyNoHypotheses events={events} onActivity={() => setTab("activity")} /> : null}
+        {hyps.data && hyps.data.length === 0 ? <WhyNoHypotheses events={events} onTab={goTab} /> : null}
 
         <Panel title={<SectionTitle no="1">{t("run.progress")}</SectionTitle>} meta={<span className="live-dot" data-state={stream}>{t(`run.stream.${stream}` as Key)}</span>}>
           <div className="panel-body">
-            <StageLine status={r.status} resumeStage={r.resume_stage} resumeStatus={r.resume_status} lastStage={lastStage} />
+            <StageLine status={r.status} resumeStage={r.resume_stage} resumeStatus={r.resume_status} lastStage={lastStage} onSelect={setStage} />
+            <p className="small muted" style={{ marginTop: 10 }}>{t("detail.stage.hint")}</p>
           </div>
         </Panel>
 
@@ -208,7 +223,7 @@ export function RunDetailPage({ id }: { id: number }) {
             </div>
         </Panel>
 
-        <section>
+        <section id="run-tabs">
           <Tabs<Tab>
             value={tab}
             onChange={setTab}
@@ -218,6 +233,8 @@ export function RunDetailPage({ id }: { id: number }) {
               { value: "experiments", label: <><span className="section-no">§5</span>{t("run.tab.experiments")}</>, count: exps.data?.length },
               { value: "activity", label: <><span className="section-no">§6</span>{t("run.tab.activity")}</>, count: events.length },
               { value: "artifacts", label: <><span className="section-no">§7</span>{t("run.tab.artifacts")}</>, count: arts.data?.length },
+              { value: "regions", label: <><span className="section-no">§8</span>{t("detail.tab.regions")}</> },
+              { value: "calls", label: <><span className="section-no">§9</span>{t("detail.tab.calls")}</> },
             ]}
           />
           {tab === "report" ? <ReportView runId={id} /> : null}
@@ -225,7 +242,18 @@ export function RunDetailPage({ id }: { id: number }) {
           {tab === "experiments" ? <ExperimentsTable q={exps} /> : null}
           {tab === "activity" ? <Activity events={events} /> : null}
           {tab === "artifacts" ? <Artifacts q={arts} runId={id} /> : null}
+          {tab === "regions" ? (
+            <Panel>
+              <Candidates runId={id} poll={live ? 15_000 : undefined} />
+            </Panel>
+          ) : null}
+          {tab === "calls" ? (
+            <Panel>
+              <ModelCalls path={`/runs/${id}/model-calls`} poll={live ? 15_000 : undefined} />
+            </Panel>
+          ) : null}
         </section>
+        <StageDrawer stage={stage} onClose={() => setStage(null)} events={events} runId={id} />
       </div>
     </Frame>
   );
@@ -379,7 +407,7 @@ function ExperimentsTable({ q }: { q: Query<Experiment[]> }) {
  * Explains a run that produced no hypotheses, from the events its
  * generation stages emit, so "0" is never left unexplained.
  */
-function WhyNoHypotheses({ events, onActivity }: { events: RunEvent[]; onActivity: () => void }) {
+function WhyNoHypotheses({ events, onTab }: { events: RunEvent[]; onTab: (t: Tab) => void }) {
   const { t } = useI18n();
   const { can } = useSession();
   const last = (type: string) => [...events].reverse().find((e) => e.event_type === type);
@@ -433,9 +461,17 @@ function WhyNoHypotheses({ events, onActivity }: { events: RunEvent[]; onActivit
           ))}
         </ul>
         <span>
-          <Button size="sm" variant="ghost" onClick={onActivity}>
-            {t("run.why.activity")}
-          </Button>
+          <span className="row">
+            <Button size="sm" variant="ghost" onClick={() => onTab("regions")}>
+              {t("detail.open.regions")}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onTab("calls")}>
+              {t("detail.open.calls")}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onTab("activity")}>
+              {t("run.why.activity")}
+            </Button>
+          </span>
         </span>
       </div>
     </div>
@@ -443,26 +479,11 @@ function WhyNoHypotheses({ events, onActivity }: { events: RunEvent[]; onActivit
 }
 
 function Activity({ events }: { events: RunEvent[] }) {
-  const { t, dateTime } = useI18n();
-  const first = useRef(events.length);
-  const shown = [...events].reverse();
+  const { t } = useI18n();
   return (
     <Panel>
-      {events.length === 0 ? (
-        <Empty title={t("run.noActivity")} />
-      ) : (
-        <ol className="events" aria-live="polite">
-          {shown.map((e, i) => (
-            <li key={e.id} data-new={events.length - 1 - i >= first.current}>
-              <time className="when" dateTime={e.created_at} title={dateTime(e.created_at)}>
-                {new Date(e.created_at).toLocaleTimeString()}
-              </time>
-              <span className="type">{e.event_type}</span>
-              <span>{e.message}</span>
-            </li>
-          ))}
-        </ol>
-      )}
+      <p className="small muted" style={{ padding: "10px var(--pad) 0" }}>{t("detail.event.hint")}</p>
+      <EventLog events={events} live />
     </Panel>
   );
 }
