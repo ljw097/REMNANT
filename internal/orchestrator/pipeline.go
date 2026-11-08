@@ -548,15 +548,19 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	}
 	if general {
 		env.Instructions = []string{
-			"No historical pattern applies: audit this region directly for a real security vulnerability of any class (memory safety, injection, path traversal, deserialization, authentication or authorization flaws, unsafe command or code execution, and so on).",
-			"Set found to true only for a specific, falsifiable weakness in this code — not a style note or a theoretical concern.",
+			"No historical pattern applies: audit this region directly for a real security vulnerability of any class.",
+			fmt.Sprintf("It was selected because it contains %s; that is a reason to read it, not evidence of a defect.", strings.Join(c.Matched, ", ")),
 		}
 	} else {
 		pv := viewPattern(c.Pattern)
 		env.Pattern = &pv
 		env.Instructions = []string{
-			"Decide whether this region plausibly contains the pattern's root cause.",
-			fmt.Sprintf("The region matched signature(s): %s.", strings.Join(c.Matched, ", ")),
+			"Decide whether this region repeats the pattern's root cause — the same mistake, not merely the same names.",
+			fmt.Sprintf("The region matched signature(s) %s; the match is textual and is not evidence by itself.", strings.Join(c.Matched, ", ")),
+		}
+		if len(c.Countered) > 0 {
+			env.Instructions = append(env.Instructions, fmt.Sprintf(
+				"It also contains %s, which the original fix introduced: check whether that guard covers this sink.", strings.Join(c.Countered, ", ")))
 		}
 	}
 

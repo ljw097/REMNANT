@@ -33,9 +33,17 @@ A code claim without a concrete evidence reference is not eligible for triage as
 
 ## Implementation status
 
-The orchestrator implements the **Hypothesis Researcher** and the **Skeptic** as model agents (`internal/orchestrator/agents.go`). The Archaeologist and Surface Mapper roles are currently deterministic stages (heuristic indexing and signature scoring); the Static Analyst and Validator are worker operations; the Reporter is a deterministic renderer. The Historian is a human task for now: patterns are entered through `POST /patterns`.
+Four roles are model agents: the **Historian** (`internal/orchestrator/intake.go`) turns a fix commit into a pattern during a repository intake; the **Hypothesis Researcher** and the **Skeptic** (`internal/orchestrator/agents.go`) draft and challenge hypotheses; the **Reporter** (`internal/orchestrator/reporter.go`) writes the narrative report and the disclosure draft, with the deterministic report kept as an appendix. The Archaeologist and Surface Mapper roles are deterministic stages (heuristic indexing and signature scoring); the Static Analyst and Validator are worker operations.
 
-Per-role overrides live in `agent_profiles`: a row with `enabled = false` turns a role off, and `llm_profile_id` routes it to another model profile.
+Per-role overrides live in `agent_profiles`: a row with `enabled = false` turns a role off, `llm_profile_id` routes it to another model profile, and administrators may add instructions, which are appended after REMNANT's rules and cannot override them.
+
+### How the prompts are written
+
+- Each system prompt gives the role a decision procedure, not just a goal: the Researcher finds the sink, traces where its values come from within the excerpt, looks for the guard, and reports only when the sink is visible, the value is plausibly input-controlled and nothing in view prevents the failure; the Skeptic checks the hypothesis's counter-evidence items, facts, preconditions and claim in that order; the Historian first decides whether the commit is a security fix, then describes the mistake generally.
+- Every rule a validator enforces is stated in the prompt (and, briefly, as a JSON Schema `description` on the field), so a model is told up front instead of being rejected afterwards: facts cite printed line numbers, every field is filled when `found` is true, Skeptic line ranges lie inside the excerpt, Historian signatures are plain identifiers of at least three characters taken from the pre-fix side of the diff.
+- `triage_confidence` / `adjusted_confidence` share one rubric (high / medium / low) defined in the shared rules.
+- The prompts list common false positives (bounds by constant or `sizeof`, test and example code, constants posing as input) and ask for concise fields, which keeps answers well under the per-call token cap.
+- Signature matches are presented as textual, not as evidence; when a region also matches a pattern's counter-signatures, the Researcher is told the original fix's guard may be present.
 
 ## Hypothesis output schema
 
