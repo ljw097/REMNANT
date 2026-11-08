@@ -582,6 +582,7 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 			if kind == "refused" {
 				j.mark(ctx, c, "refused")
 			}
+			j.o.callResult(ctx, callID, failedResult(kind, err), nil)
 			return
 		}
 		out, err := parseResearcher(raw, allowed)
@@ -651,8 +652,10 @@ func (j *job) investigate(ctx context.Context, researcher, skeptic *agent, b *bu
 	switch kind := j.callFailed(ctx, err, c, "skeptic", stats); kind {
 	case "":
 	case "stopped", "budget":
+		j.o.callResult(ctx, callID, failedResult(kind, err), nil)
 		return // stays a draft; challenged when the run resumes
 	default:
+		j.o.callResult(ctx, callID, failedResult(kind, err)+"; the hypothesis went to triage unchallenged", nil)
 		j.toTriage(ctx, hypID)
 		return
 	}

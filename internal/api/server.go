@@ -102,6 +102,7 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 	api.HandleFunc("GET /api/v1/hypotheses/{id}/model-calls", s.listModelCalls(func(id int64) store.ModelCallFilter { return store.ModelCallFilter{HypothesisID: &id} }))
 	api.HandleFunc("GET /api/v1/intakes/{id}/model-calls", s.listModelCalls(func(id int64) store.ModelCallFilter { return store.ModelCallFilter{IntakeID: &id} }))
 	api.HandleFunc("GET /api/v1/intakes/{id}/commits/{sha}", s.intakeCommit)
+	api.HandleFunc("GET /api/v1/model-calls", s.searchModelCalls)
 	api.HandleFunc("GET /api/v1/model-calls/{id}", s.getModelCall)
 	api.HandleFunc("GET /api/v1/runs/{id}/artifacts/{artifactId}", s.artifactContent)
 

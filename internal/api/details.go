@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/ljw097/remnant/internal/store"
 )
@@ -82,4 +84,51 @@ func (s *Server) intakeCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// searchModelCalls is the instance-wide LLM record: every agent call,
+// newest first, filterable, with totals for the whole filter.
+func (s *Server) searchModelCalls(w http.ResponseWriter, r *http.Request) {
+	v := r.URL.Query()
+	q := store.ModelCallQuery{Role: v.Get("role"), Outcome: v.Get("outcome"), Owner: v.Get("owner"), Q: strings.TrimSpace(v.Get("q"))}
+	checks := []error{maxLen("q", q.Q, 200)}
+	if q.Role != "" {
+		checks = append(checks, oneOf("role", q.Role, "hypothesis_researcher", "skeptic", "reporter", "historian"))
+	}
+	if q.Outcome != "" {
+		checks = append(checks, oneOf("outcome", q.Outcome, "ok", "refused", "truncated", "error", "stopped"))
+	}
+	if q.Owner != "" {
+		checks = append(checks, oneOf("owner", q.Owner, "run", "intake"))
+	}
+	if !validate(w, checks...) {
+		return
+	}
+	if s := v.Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > 500 {
+			writeError(w, http.StatusBadRequest, "bad_request", "limit must be 1–500")
+			return
+		}
+		q.Limit = n
+	}
+	for _, f := range []struct {
+		name string
+		dst  *int64
+	}{{"run_id", &q.RunID}, {"intake_id", &q.IntakeID}, {"before_id", &q.BeforeID}} {
+		if s := v.Get(f.name); s != "" {
+			n, err := strconv.ParseInt(s, 10, 64)
+			if err != nil || n < 1 {
+				writeError(w, http.StatusBadRequest, "bad_request", "invalid "+f.name)
+				return
+			}
+			*f.dst = n
+		}
+	}
+	page, err := s.store.SearchModelCalls(r.Context(), q)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }

@@ -71,7 +71,7 @@ function CallTotals({ calls }: { calls: ModelCall[] }) {
  * Lists model calls; a row opens the full call (prompt envelope and answer).
  * `path` is the list endpoint; `filter` narrows what is shown.
  */
-export function ModelCalls({ path, filter, empty, poll }: { path: string; filter?: (c: ModelCall) => boolean; empty?: ReactNode; poll?: number }) {
+export function ModelCalls({ path, filter, empty, poll, recordsHref }: { path: string; filter?: (c: ModelCall) => boolean; empty?: ReactNode; poll?: number; recordsHref?: string }) {
   const { t } = useI18n();
   const q = useApi<ModelCall[]>(path, poll);
   const [open, setOpen] = useState<number | null>(null);
@@ -83,53 +83,86 @@ export function ModelCalls({ path, filter, empty, poll }: { path: string; filter
     <>
       <div className="toolbar">
         <CallTotals calls={rows} />
+        {recordsHref ? (
+          <a className="small" href={recordsHref} onClick={(e) => routeClick(e, recordsHref)}>
+            {t("llm.openFiltered")}
+          </a>
+        ) : null}
       </div>
-      <div className="table-wrap">
-        <table className="table detail-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>{t("detail.col.role")}</th>
-              <th>{t("detail.col.subject")}</th>
-              <th>{t("detail.col.outcome")}</th>
-              <th>{t("detail.col.result")}</th>
-              <th className="num">{t("detail.col.tokens")}</th>
-              <th className="num">{t("detail.col.time")}</th>
-              <th>{t("detail.col.when")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((c) => (
-              <tr key={c.id} className="clickable" tabIndex={0} onClick={() => setOpen(c.id)} onKeyDown={(e) => (e.key === "Enter" ? setOpen(c.id) : undefined)}>
-                <td className="mono small">{c.id}</td>
-                <td>
-                  <RoleName role={c.role} />
-                </td>
-                <td className="mono small detail-subject" title={c.subject}>
-                  {c.subject || "—"}
-                </td>
-                <td>
-                  <CallOutcome outcome={c.outcome} />
-                </td>
-                <td className="small detail-result" title={c.error || c.result}>
-                  {c.result || c.error || "—"}
-                </td>
-                <td className="num small">
-                  {c.input_tokens.toLocaleString()} / {c.output_tokens.toLocaleString()}
-                </td>
-                <td className="num small">{ms(c.duration_ms)}</td>
-                <td className="small">
-                  <Time iso={c.created_at} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <CallTable rows={rows} onOpen={setOpen} />
       <ModelCallDrawer id={open} onClose={() => setOpen(null)} />
     </>
   );
 }
+
+/** The call table shared by every call list; `owner` adds a run / analysis column. */
+export function CallTable({ rows, onOpen, owner }: { rows: ModelCall[]; onOpen: (id: number) => void; owner?: boolean }) {
+  const { t } = useI18n();
+  return (
+    <div className="table-wrap">
+      <table className="table detail-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            {owner ? <th>{t("detail.col.owner")}</th> : null}
+            <th>{t("detail.col.role")}</th>
+            <th>{t("detail.col.subject")}</th>
+            <th>{t("detail.col.outcome")}</th>
+            <th>{t("detail.col.result")}</th>
+            <th className="num">{t("detail.col.tokens")}</th>
+            <th className="num">{t("detail.col.time")}</th>
+            <th>{t("detail.col.when")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.id} className="clickable" tabIndex={0} onClick={() => onOpen(c.id)} onKeyDown={(e) => (e.key === "Enter" ? onOpen(c.id) : undefined)}>
+              <td className="mono small">{c.id}</td>
+              {owner ? (
+                <td className="small" onClick={(e) => e.stopPropagation()}>
+                  <OwnerRef call={c} />
+                </td>
+              ) : null}
+              <td>
+                <RoleName role={c.role} />
+              </td>
+              <td className="mono small detail-subject" title={c.subject}>
+                {c.subject || "—"}
+              </td>
+              <td>
+                <CallOutcome outcome={c.outcome} />
+              </td>
+              <td className="small detail-result" title={c.error || c.result}>
+                {c.result || c.error || "—"}
+              </td>
+              <td className="num small">
+                {c.input_tokens.toLocaleString()} / {c.output_tokens.toLocaleString()}
+              </td>
+              <td className="num small">{ms(c.duration_ms)}</td>
+              <td className="small">
+                <Time iso={c.created_at} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** [R-n] for a run's call, [I-n] for an analysis (intake) call. */
+export function OwnerRef({ call }: { call: ModelCall }) {
+  if (call.run_id) return <Ref kind="R" id={call.run_id} to={`/runs/${call.run_id}`} />;
+  if (call.intake_id)
+    return (
+      <a className="ref" href={`/analyze/${call.intake_id}`} onClick={(e) => routeClick(e, `/analyze/${call.intake_id}`)}>
+        [I-{call.intake_id}]
+      </a>
+    );
+  return <span className="muted">—</span>;
+}
+
+export { RoleName };
 
 /** One model call in full: what was asked, what came back, what it led to. */
 export function ModelCallDrawer({ id, onClose }: { id: number | null; onClose: () => void }) {
@@ -160,12 +193,7 @@ export function ModelCallDrawer({ id, onClose }: { id: number | null; onClose: (
             <dd className="mono small">{c.subject || "—"}</dd>
             <dt>{t("detail.call.links")}</dt>
             <dd className="row">
-              {c.run_id ? <Ref kind="R" id={c.run_id} to={`/runs/${c.run_id}`} /> : null}
-              {c.intake_id ? (
-                <a className="ref" href={`/analyze/${c.intake_id}`} onClick={(e) => routeClick(e, `/analyze/${c.intake_id}`)}>
-                  [I-{c.intake_id}]
-                </a>
-              ) : null}
+              <OwnerRef call={c} />
               {c.hypothesis_id ? <Ref kind="H" id={c.hypothesis_id} to={`/hypotheses/${c.hypothesis_id}`} /> : null}
               {c.evidence_id ? <Ref kind="E" id={c.evidence_id} /> : null}
               {c.commit_sha ? <Hash value={c.commit_sha} /> : null}

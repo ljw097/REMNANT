@@ -442,7 +442,7 @@ export function IntakePage({ id }: { id: number }) {
           ) : null}
           <section id="intake-calls">
             <Panel title={t("detail.intake.calls")} meta={t("detail.intake.callsSub")}>
-              <ModelCalls path={`/intakes/${id}/model-calls`} poll={busy ? 3000 : undefined} empty={t("detail.intake.noCalls")} />
+              <ModelCalls path={`/intakes/${id}/model-calls`} poll={busy ? 3000 : undefined} empty={t("detail.intake.noCalls")} recordsHref={`/llm?intake_id=${id}`} />
             </Panel>
           </section>
           {d.commits.length > 0 ? (

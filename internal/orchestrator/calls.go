@@ -70,4 +70,19 @@ func (o *Orchestrator) callResult(ctx context.Context, id int64, result string, 
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
+// failedResult describes, for the call log, what happened after a call that
+// did not return a usable answer (kind from callFailed).
+func failedResult(kind string, err error) string {
+	if err != nil && strings.Contains(err.Error(), "truncated at max") {
+		return "answer cut off at the per-call token cap; raise tokens per model call"
+	}
+	switch kind {
+	case "refused":
+		return "refused by the model; region skipped"
+	case "stopped":
+		return "run stopped; retried when it resumes"
+	case "budget":
+		return "token budget exhausted"
+	}
+	return "call failed; region skipped"
+}

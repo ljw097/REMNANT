@@ -18,6 +18,7 @@ import { HypothesisPage } from "./pages/Hypothesis";
 import { ReviewQueuePage } from "./pages/Review";
 import { ApprovalsPage } from "./pages/Approvals";
 import { FindingsPage } from "./pages/Findings";
+import { LlmRecordsPage } from "./pages/LlmRecords";
 import { ProjectsPage } from "./pages/Projects";
 import { ProjectDetailPage } from "./pages/ProjectDetail";
 import { PatternsPage } from "./pages/Patterns";
@@ -54,6 +55,7 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/runs", icon: "runs", label: "nav.runs", count: (s) => s.active_runs },
       { to: "/reports", icon: "file", label: "nav.reports" },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
+      { to: "/llm", icon: "cpu", label: "nav.llm" },
     ],
   },
   {
@@ -255,6 +257,7 @@ function Routes({ onMenu }: { onMenu: () => void }) {
   if ((m = match("/hypotheses/:id", path))) return <HypothesisPage id={Number(m.id)} />;
   if (path === "/approvals") return <ApprovalsPage />;
   if (path === "/findings") return <FindingsPage />;
+  if (path === "/llm") return <LlmRecordsPage />;
   if (path === "/projects") return <ProjectsPage />;
   if ((m = match("/projects/:id", path))) return <ProjectDetailPage id={Number(m.id)} />;
   if (path === "/patterns") return <PatternsPage />;

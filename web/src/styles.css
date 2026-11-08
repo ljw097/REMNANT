@@ -879,3 +879,14 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
 .drawer-body > section, .drawer-body > .detail-pre { min-height: min-content; }
 .detail-pre { flex-shrink: 0; min-height: 5.5em; }
 .drawer-body { grid-auto-rows: max-content; }
+/* LLM records */
+button.statcard { font: inherit; text-align: left; cursor: pointer; }
+.statcard[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.llm-stats { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.llm-stats .statcard-value { font-size: 24px; }
+.llm-filters { flex-wrap: wrap; gap: 8px; }
+.llm-filters .input { flex: 1 1 220px; min-width: 0; }
+.llm-filters .select { width: auto; flex: 0 1 180px; }
+.detail-table th, .detail-table td.num { white-space: nowrap; }
+.detail-table .detail-subject { max-width: 260px; }
+.detail-table .detail-result { max-width: 300px; }

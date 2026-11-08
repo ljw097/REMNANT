@@ -1296,6 +1296,35 @@ func TestRepositoryIntake(t *testing.T) {
 		t.Fatalf("run call log %+v", runCalls)
 	}
 
+	// The instance-wide LLM record: filters, totals for the whole filter, paging.
+	all, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{})
+	must(t, err)
+	if all.Stats.Calls != int64(len(runCalls)+1) || all.Stats.ByRole[roleHistorian] != 1 || all.Calls[0].ID < all.Calls[len(all.Calls)-1].ID {
+		t.Fatalf("all calls %+v", all.Stats)
+	}
+	hist, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Owner: "intake", Q: recs[0].SHA[:10]})
+	must(t, err)
+	if len(hist.Calls) != 1 || hist.Calls[0].Role != roleHistorian || hist.Stats.Calls != 1 {
+		t.Fatalf("search by commit %+v", hist)
+	}
+	first, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Limit: 1})
+	must(t, err)
+	next, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Limit: 1, BeforeID: first.NextBefore})
+	must(t, err)
+	if len(first.Calls) != 1 || first.NextBefore == 0 || len(next.Calls) != 1 || next.Calls[0].ID >= first.Calls[0].ID || next.Stats.Calls != all.Stats.Calls {
+		t.Fatalf("paging %+v / %+v", first, next)
+	}
+	refused, err := e.st.SearchModelCalls(e.ctx, store.ModelCallQuery{Outcome: "refused"})
+	must(t, err)
+	if refused.Stats.Calls != all.Stats.ByOutcome["refused"] || int64(len(refused.Calls)) != refused.Stats.Calls {
+		t.Fatalf("refused filter %+v (all %+v)", refused.Stats, all.Stats)
+	}
+	for _, c := range refused.Calls {
+		if c.Outcome != "refused" || c.Result == "" {
+			t.Fatalf("refused call %+v", c)
+		}
+	}
+
 	// Analysing the same repository again reuses the pattern mined from the
 	// same fix commit instead of failing on its uniqueness.
 	again, err := e.st.CreateIntake(e.ctx, store.IntakeInput{SourceURI: "https://git.example.test/acme/parser", ProjectName: "acme/parser again",

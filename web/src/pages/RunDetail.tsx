@@ -249,7 +249,7 @@ export function RunDetailPage({ id }: { id: number }) {
           ) : null}
           {tab === "calls" ? (
             <Panel>
-              <ModelCalls path={`/runs/${id}/model-calls`} poll={live ? 15_000 : undefined} />
+              <ModelCalls path={`/runs/${id}/model-calls`} poll={live ? 15_000 : undefined} recordsHref={`/llm?run_id=${id}`} />
             </Panel>
           ) : null}
         </section>

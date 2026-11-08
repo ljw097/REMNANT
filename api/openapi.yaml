@@ -510,6 +510,38 @@ paths:
         '200': { description: Commit, content: { application/json: { schema: { $ref: '#/components/schemas/CommitRecord' } } } }
         '404': { $ref: '#/components/responses/Error' }
 
+  /model-calls:
+    get:
+      summary: The instance-wide LLM record — every agent call, newest first
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 }, description: Matches subject, result, error, model, or a commit SHA prefix }
+        - { name: role, in: query, schema: { type: string, enum: [hypothesis_researcher, skeptic, reporter, historian] } }
+        - { name: outcome, in: query, schema: { type: string, enum: [ok, refused, truncated, error, stopped] } }
+        - { name: owner, in: query, schema: { type: string, enum: [run, intake] } }
+        - { name: run_id, in: query, schema: { type: integer } }
+        - { name: intake_id, in: query, schema: { type: integer } }
+        - { name: before_id, in: query, schema: { type: integer }, description: next_before of the previous page }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: One page, with totals for everything the filter matches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  calls: { type: array, items: { $ref: '#/components/schemas/ModelCall' } }
+                  next_before: { type: integer, description: 0 when there is no older page }
+                  stats:
+                    type: object
+                    properties:
+                      calls: { type: integer }
+                      input_tokens: { type: integer }
+                      output_tokens: { type: integer }
+                      duration_ms: { type: integer }
+                      by_outcome: { type: object, additionalProperties: { type: integer } }
+                      by_role: { type: object, additionalProperties: { type: integer } }
+
   /model-calls/{id}:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     get:

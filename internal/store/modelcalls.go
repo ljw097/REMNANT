@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -119,4 +121,117 @@ func (s *Store) CommitRecord(ctx context.Context, targetID int64, sha string) (C
 	return one[CommitRecord](s.pool.Query(ctx, `
 		SELECT id, target_id, sha, committed_at, subject, body, files, diff, signals, score
 		FROM commit_records WHERE target_id = $1 AND sha = $2`, targetID, sha))
+}
+
+// ModelCallQuery filters the instance-wide call log. Zero fields match all.
+type ModelCallQuery struct {
+	Role, Outcome, Q string
+	// Owner narrows to runs ("run"), intakes ("intake") or neither ("").
+	Owner           string
+	RunID, IntakeID int64
+	BeforeID        int64
+	Limit           int
+}
+
+// ModelCallStats totals the calls a query matches (not just the page).
+type ModelCallStats struct {
+	Calls        int64            `json:"calls"`
+	InputTokens  int64            `json:"input_tokens"`
+	OutputTokens int64            `json:"output_tokens"`
+	DurationMS   int64            `json:"duration_ms"`
+	ByOutcome    map[string]int64 `json:"by_outcome"`
+	ByRole       map[string]int64 `json:"by_role"`
+}
+
+type ModelCallPage struct {
+	Calls []ModelCall `json:"calls"`
+	// NextBefore is passed as before_id for the next (older) page; 0 when none.
+	NextBefore int64          `json:"next_before"`
+	Stats      ModelCallStats `json:"stats"`
+}
+
+func (q ModelCallQuery) where() (string, []any) {
+	conds, args := []string{"true"}, []any{}
+	add := func(cond string, v any) {
+		args = append(args, v)
+		conds = append(conds, fmt.Sprintf(cond, len(args)))
+	}
+	if q.Role != "" {
+		add("role = $%d", q.Role)
+	}
+	if q.Outcome != "" {
+		add("outcome = $%d", q.Outcome)
+	}
+	if q.RunID > 0 {
+		add("run_id = $%d", q.RunID)
+	}
+	if q.IntakeID > 0 {
+		add("intake_id = $%d", q.IntakeID)
+	}
+	switch q.Owner {
+	case "run":
+		conds = append(conds, "run_id IS NOT NULL")
+	case "intake":
+		conds = append(conds, "intake_id IS NOT NULL")
+	}
+	if q.Q != "" {
+		add(`(subject ILIKE '%%' || $%[1]d || '%%' OR result ILIKE '%%' || $%[1]d || '%%' OR error ILIKE '%%' || $%[1]d || '%%'
+		      OR model ILIKE '%%' || $%[1]d || '%%' OR commit_sha LIKE $%[1]d || '%%')`, q.Q)
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+// SearchModelCalls pages through the call log, newest first, with totals
+// for everything the filter matches.
+func (s *Store) SearchModelCalls(ctx context.Context, q ModelCallQuery) (ModelCallPage, error) {
+	if q.Limit <= 0 || q.Limit > 500 {
+		q.Limit = 100
+	}
+	where, args := q.where()
+	page := ModelCallPage{Calls: []ModelCall{}, Stats: ModelCallStats{ByOutcome: map[string]int64{}, ByRole: map[string]int64{}}}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT role, outcome, count(*), COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0), COALESCE(sum(duration_ms), 0)
+		FROM model_calls WHERE `+where+` GROUP BY role, outcome`, args...)
+	if err != nil {
+		return page, err
+	}
+	for rows.Next() {
+		var role, outcome string
+		var n, in, out, d int64
+		if err := rows.Scan(&role, &outcome, &n, &in, &out, &d); err != nil {
+			rows.Close()
+			return page, err
+		}
+		st := &page.Stats
+		st.Calls += n
+		st.InputTokens += in
+		st.OutputTokens += out
+		st.DurationMS += d
+		st.ByOutcome[outcome] += n
+		st.ByRole[role] += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+
+	if q.BeforeID > 0 {
+		args = append(args, q.BeforeID)
+		where += fmt.Sprintf(" AND id < $%d", len(args))
+	}
+	args = append(args, q.Limit+1)
+	calls, err := collect[ModelCall](s.pool.Query(ctx, `SELECT `+modelCallListCols+` FROM model_calls WHERE `+where+
+		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args)), args...))
+	if err != nil {
+		return page, err
+	}
+	if len(calls) > q.Limit {
+		calls = calls[:q.Limit]
+		page.NextBefore = calls[len(calls)-1].ID
+	}
+	if calls != nil {
+		page.Calls = calls
+	}
+	return page, nil
 }
