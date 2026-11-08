@@ -10,6 +10,7 @@ import { Button, Empty, ErrorNote, PageHead, Panel, Priority, SkeletonRows, Stat
 import { StageLine } from "../ui/domain";
 import { hypothesisLook, runLook, terminalRun } from "../ui/status";
 import { Icon, type IconName } from "../ui/Icon";
+import { AnalyzeStart } from "./Analyze";
 
 function StatCards() {
   const { t } = useI18n();
@@ -41,9 +42,25 @@ function StatCards() {
 
 export function Dashboard() {
   const { t } = useI18n();
-  const { prefs, savePrefs, me, branding } = useSession();
+  const { prefs, savePrefs, me, branding, summary, can } = useSession();
   const [editing, setEditing] = useState(false);
   const panels = prefs.dashboard.filter((p) => p.visible && (p.id !== "system" || me.role === "admin"));
+
+  // A fresh instance has nothing to show yet: instead of a wall of zeros and
+  // empty panels, offer the one thing to do next.
+  if (summary && summary.projects === 0 && can("researcher")) {
+    return (
+      <Frame crumbs={[{ label: t("nav.dashboard") }]}>
+        <PageHead title={t("dash.start.title")} sub={t("dash.start.sub")} />
+        <div className="stack" style={{ gap: 16, maxWidth: 880 }}>
+          <AnalyzeStart />
+          <p className="small muted">
+            <Link to="/projects?new=1">{t("dash.start.manual")}</Link>
+          </p>
+        </div>
+      </Frame>
+    );
+  }
 
   return (
     <Frame crumbs={[{ label: t("nav.dashboard") }]}>

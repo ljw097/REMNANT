@@ -51,7 +51,6 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/", icon: "dashboard", label: "nav.dashboard" },
       { to: "/review", icon: "review", label: "nav.review", roles: ["reviewer"], count: (s) => s.awaiting_triage, attention: true },
       { to: "/approvals", icon: "approvals", label: "nav.approvals", count: (s) => s.pending_approvals, attention: true },
-      { to: "/analyze", icon: "branch", label: "nav.analyze", roles: ["researcher"] },
       { to: "/runs", icon: "runs", label: "nav.runs", count: (s) => s.active_runs },
       { to: "/reports", icon: "file", label: "nav.reports" },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
@@ -117,6 +116,12 @@ function Shell() {
           </span>
           <span className="brand-name">{appName(branding)}</span>
         </Link>
+        {can("researcher") ? (
+          <Link to="/analyze" className="nav-cta" aria-current={active("/analyze") ? "page" : undefined} title={t("nav.newAnalysis")}>
+            <Icon name="plus" />
+            <span className="nav-label">{t("nav.newAnalysis")}</span>
+          </Link>
+        ) : null}
         <nav className="nav">
           {navGroups.map((g) => (
             <div className="nav-group" key={g.label}>

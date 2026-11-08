@@ -53,12 +53,15 @@ scripts/local.sh
 
 That builds the web UI and `remnantd`, then runs `remnantd local`. The local
 command picks sensible defaults for a single machine: a per-user data directory,
-a master key file, loopback-only listening, and automatic updates off. When
+a master key file, loopback-only listening, automatic updates off, and the
+public code hosts (github.com, gitlab.com, codeberg.org, bitbucket.org) allowed
+for repository analysis. When
 `REMNANT_DATABASE_URL` is not set it starts a PostgreSQL in Docker for you (the
 container `remnant-db`, a persistent volume, port 5433). It then applies
 migrations, serves on `127.0.0.1:8080`, and opens the first-run setup page in
 your browser, where you pick the personal profile and set an administrator
-password. You do not have to administer a server. If you would rather bring your
+password. The dashboard then asks for one API key and a repository URL, and
+that is enough for a first report. You do not have to administer a server. If you would rather bring your
 own database, set `REMNANT_DATABASE_URL` to any PostgreSQL and the same command
 uses it.
 

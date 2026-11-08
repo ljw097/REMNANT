@@ -824,3 +824,19 @@ a.ref:hover { color: var(--accent); background: color-mix(in oklch, var(--accent
   .report-doc { padding: 20px 18px; }
   .report-dl { position: static; display: inline-flex; margin: 0 0 14px auto; }
 }
+
+/* ---------- Quick start ---------- */
+.nav-cta {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 34px; margin: 0 0 14px; padding: 4px 10px; border-radius: var(--radius);
+  background: var(--primary); color: var(--primary-ink); text-decoration: none; font-weight: 600;
+}
+.nav-cta:hover, .nav-cta[aria-current="page"] { background: var(--primary-hover); color: var(--primary-ink); }
+.shell[data-collapsed="true"] .nav-cta { justify-content: center; padding: 8px 0; }
+.quick-row { display: flex; gap: 8px; align-items: stretch; }
+.quick-row > .input { flex: 1; min-width: 0; }
+.quick-row > .btn { flex: none; }
+@media (max-width: 560px) { .quick-row { flex-direction: column; } }
+.quick-plan { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; margin-top: -4px; }
+.rule.boxed { border: 1px solid var(--rule); border-radius: 6px; }
+.rule.boxed:first-of-type { border-top: 1px solid var(--rule); }

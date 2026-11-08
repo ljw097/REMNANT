@@ -22,9 +22,15 @@ const (
 	localDBURL     = "postgres://remnant:remnant@127.0.0.1:" + localDBPort + "/remnant?sslmode=disable"
 )
 
+// localRepoHosts are the public code hosts a local run may fetch from, so
+// "paste a repository URL" works without editing the environment. Setting
+// REMNANT_REPO_HOSTS (even to an empty value) overrides it.
+const localRepoHosts = "github.com,gitlab.com,codeberg.org,bitbucket.org"
+
 // prepareLocalEnv sets the environment for a local run: a per-user data
-// directory, loopback listener, updates off, and a database — the one in
-// REMNANT_DATABASE_URL if set, otherwise a local Docker PostgreSQL.
+// directory, loopback listener, updates off, the public code hosts allowed,
+// and a database — the one in REMNANT_DATABASE_URL if set, otherwise a local
+// Docker PostgreSQL.
 func prepareLocalEnv(log *slog.Logger) error {
 	if os.Getenv("REMNANT_DATA_DIR") == "" {
 		dir, err := localDataDir()
@@ -42,6 +48,10 @@ func prepareLocalEnv(log *slog.Logger) error {
 	}
 	if os.Getenv("REMNANT_AUTO_UPDATE") == "" {
 		_ = os.Setenv("REMNANT_AUTO_UPDATE", "off")
+	}
+	if _, set := os.LookupEnv("REMNANT_REPO_HOSTS"); !set {
+		_ = os.Setenv("REMNANT_REPO_HOSTS", localRepoHosts)
+		log.Info("remote repositories allowed", "hosts", localRepoHosts)
 	}
 	if os.Getenv("REMNANT_DATABASE_URL") != "" {
 		return nil
