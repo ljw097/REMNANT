@@ -162,7 +162,7 @@ const ko = {
   "dash.runs": "진행 중인 런",
   "dash.runs.count": "{n}개",
   "dash.runs.emptyTitle": "진행 중인 런이 없습니다",
-  "dash.runs.emptyBody": "프로젝트와 대상, 패턴을 골라 새 런을 시작하세요.",
+  "dash.runs.emptyBody": "저장소 URL을 붙여 넣어 새 분석을 시작하세요.",
   "dash.findings": "최근 발견",
   "dash.recentRuns": "최근 끝난 런",
   "dash.recentRuns.empty": "아직 끝난 런이 없습니다",

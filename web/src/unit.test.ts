@@ -5,6 +5,9 @@ import { match } from "./router";
 import { parseExcerpt } from "./ui/domain";
 import { classify, fallbackPresets } from "./ui/policy";
 import { passwordProblem } from "./pages/Password";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Markdown } from "./ui/Markdown";
 
 describe("SSEParser", () => {
   it("parses events split across chunks and line endings", () => {
@@ -102,5 +105,20 @@ describe("passwordProblem", () => {
     expect(passwordProblem("alice", "long enough pw", "long enough px")).toBe("password.mismatch");
     expect(passwordProblem("alice", "long enough pw", "long enough pw")).toBeNull();
     expect(passwordProblem("alice", "가나다라마바사아자차", "")).toBeNull();
+  });
+});
+
+describe("Markdown", () => {
+  it("renders bold nested in italic, as the report header uses it", () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { source: "*Findings marked **candidate** were not confirmed.*" }));
+    expect(html).toContain("<em>Findings marked <strong>candidate</strong> were not confirmed.</em>");
+    expect(html).not.toContain("**");
+  });
+  it("renders the report's provenance notice (underscore italic with bold inside)", () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { source: "_Prepared by REMNANT. Findings marked **candidate** were not confirmed. Reviewed by: ______._" }));
+    expect(html).toContain("<em>Prepared by REMNANT. Findings marked <strong>candidate</strong> were not confirmed. Reviewed by: </em>");
+  });
+  it("keeps markup inside code spans literal", () => {
+    expect(renderToStaticMarkup(createElement(Markdown, { source: "use `**x**` here" }))).toContain("<code class=\"md-code\">**x**</code>");
   });
 });

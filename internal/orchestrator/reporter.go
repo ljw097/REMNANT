@@ -272,6 +272,11 @@ func renderNarrativeMarkdown(rep store.RunReport, out reporterOutput, generated 
 				if i > 0 {
 					p(", ")
 				}
+				if e.FilePath == "" {
+					// Not a source location, e.g. the Skeptic's counter-evidence.
+					p("[E-%d] (%s)", e.ID, strings.ReplaceAll(e.EvidenceKind, "_", " "))
+					continue
+				}
 				loc := e.FilePath
 				if e.LineStart != nil {
 					loc += fmt.Sprintf(":%d", *e.LineStart)

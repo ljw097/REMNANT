@@ -162,7 +162,7 @@ const en: Record<keyof typeof ko, string> = {
   "dash.runs": "Runs in motion",
   "dash.runs.count": "{n} runs",
   "dash.runs.emptyTitle": "Nothing is running",
-  "dash.runs.emptyBody": "Pick a project, targets and patterns to start a run.",
+  "dash.runs.emptyBody": "Paste a repository URL to start a new analysis.",
   "dash.findings": "Recent findings",
   "dash.recentRuns": "Recently finished runs",
   "dash.recentRuns.empty": "No finished runs yet",

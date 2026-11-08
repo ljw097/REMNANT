@@ -228,7 +228,7 @@ function RunsInMotion() {
       ) : runs.error ? (
         <ErrorNote error={runs.error} retry={runs.reload} />
       ) : moving.length === 0 ? (
-        <Empty title={t("dash.runs.emptyTitle")} body={t("dash.runs.emptyBody")} action={<Link to="/runs/new">{t("runs.new")}</Link>} />
+        <Empty title={t("dash.runs.emptyTitle")} body={t("dash.runs.emptyBody")} action={<Link to="/analyze">{t("nav.newAnalysis")}</Link>} />
       ) : (
         <div className="run-lines">
           {moving.map((r) => (

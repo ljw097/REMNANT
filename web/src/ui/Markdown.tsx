@@ -129,10 +129,11 @@ function parse(src: string): Block[] {
 }
 
 // Inline formatting: `code`, **bold**, *italic* / _italic_, [text](url).
-// Code spans win first so markup inside them stays literal.
+// Code spans win first so markup inside them stays literal; bold and italic
+// may nest ("*… **candidate** …*").
 function inline(text: string, keyBase: string, refs = false): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))|(\[[HRP]-\d+\])|(\bCVE-\d{4}-\d{4,7}\b)/g;
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*(?:[^*]|\*\*[^*]+\*\*)+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))|(\[[HRP]-\d+\])|(\bCVE-\d{4}-\d{4,7}\b)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let n = 0;
@@ -143,9 +144,9 @@ function inline(text: string, keyBase: string, refs = false): ReactNode[] {
     const ref = tok.match(/^\[([HRP])-(\d+)\]$/);
     const cve = /^CVE-/.test(tok);
     if (tok.startsWith("`")) out.push(<code key={k} className="md-code">{tok.slice(1, -1)}</code>);
-    else if (tok.startsWith("**")) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>);
-    else if (tok.startsWith("*")) out.push(<em key={k}>{tok.slice(1, -1)}</em>);
-    else if (tok.startsWith("_")) out.push(<em key={k}>{tok.slice(1, -1)}</em>);
+    else if (tok.startsWith("**")) out.push(<strong key={k}>{inline(tok.slice(2, -2), k, refs)}</strong>);
+    else if (tok.startsWith("*")) out.push(<em key={k}>{inline(tok.slice(1, -1), k, refs)}</em>);
+    else if (tok.startsWith("_")) out.push(<em key={k}>{inline(tok.slice(1, -1), k, refs)}</em>);
     else if (ref) out.push(refs ? <RefLink key={k} to={refTo[ref[1]!]!(ref[2]!)}>{tok}</RefLink> : <span key={k} className="md-ref-flat">{tok}</span>);
     else if (cve) out.push(refs ? <RefLink key={k} to={`https://nvd.nist.gov/vuln/detail/${tok}`}>{tok}</RefLink> : <span key={k}>{tok}</span>);
     else {
