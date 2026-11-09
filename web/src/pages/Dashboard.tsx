@@ -12,15 +12,32 @@ import { hypothesisLook, runLook, terminalRun } from "../ui/status";
 import { Icon, type IconName } from "../ui/Icon";
 import { AnalyzeStart } from "./Analyze";
 
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 function StatCards() {
   const { t } = useI18n();
   const { summary: s, can } = useSession();
-  const cards: { to: string; icon: IconName; label: Key; value?: number; sub?: string; tone?: "ok" | "warn" | "info"; show?: boolean }[] = [
+  const usage = useApi<{ today: { output_tokens: number; input_tokens: number; calls: number } }>(`/usage?days=1&tz=${encodeURIComponent(browserZone())}`, 60_000);
+  const today = usage.data?.today;
+  const cards: { to: string; icon: IconName; label: Key; value?: number | string; sub?: string; tone?: "ok" | "warn" | "info"; show?: boolean }[] = [
     { to: "/runs", icon: "runs", label: "stat.activeRuns", value: s?.active_runs, sub: s && s.paused_runs > 0 ? t("stat.paused", { n: s.paused_runs }) : undefined, tone: "info" },
     { to: "/review", icon: "review", label: "stat.awaitingTriage", value: s?.awaiting_triage, tone: s && s.awaiting_triage > 0 ? "warn" : undefined, show: can("reviewer") },
     { to: "/approvals", icon: "approvals", label: "stat.pendingApprovals", value: s?.pending_approvals, tone: s && s.pending_approvals > 0 ? "warn" : undefined },
     { to: "/findings", icon: "findings", label: "stat.validated", value: s?.validated, sub: s && s.validation_pending > 0 ? t("stat.inValidation", { n: s.validation_pending }) : undefined, tone: "ok" },
     { to: "/projects", icon: "projects", label: "stat.projects", value: s?.projects, sub: t("stat.targets", { n: s?.targets ?? 0 }) },
+    {
+      to: "/usage",
+      icon: "chart",
+      label: "stat.tokensToday",
+      value: today ? today.output_tokens.toLocaleString() : undefined,
+      sub: today ? t("stat.tokensTodaySub", { i: today.input_tokens.toLocaleString(), c: today.calls }) : undefined,
+    },
   ];
   return (
     <div className="statcards">

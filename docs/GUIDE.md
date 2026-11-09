@@ -51,10 +51,22 @@ This builds the web UI and `remnantd`, then runs `remnantd local`, which:
 - starts a PostgreSQL in Docker when `REMNANT_DATABASE_URL` is not set
   (container `remnant-db`, a persistent volume, port 5433),
 - applies migrations, serves, and **opens the first-run setup page in your
-  browser**.
+  browser** with the setup code already filled in (it travels in the URL
+  fragment, which the browser never sends to the server).
 
 Without Docker, start any PostgreSQL yourself and set `REMNANT_DATABASE_URL`;
-the same command uses it.
+the same command uses it. **The address is remembered** (in
+`<data dir>/database-url`, mode 0600, next to the master key), so later runs
+need only `scripts/local.sh`.
+
+**If Docker works only with `sudo`** on your machine, `remnantd local` says so
+and prints the exact commands: start the database once with
+`sudo docker run … postgres:17`, then run
+`REMNANT_DATABASE_URL='postgres://remnant:remnant@127.0.0.1:5433/remnant?sslmode=disable' scripts/local.sh`
+once. Do not run REMNANT itself with `sudo`.
+
+After `git pull`, rebuild the web UI (`(cd web && npm ci && npm run build)`):
+`scripts/local.sh` builds it only when `web/dist` is missing.
 
 ### As a server
 
@@ -96,10 +108,31 @@ the URL) asks you to:
 
 2. **Create the administrator** — a username, a password (10+ characters), an
    optional instance name, and the setup code.
+3. **Connect a model** (optional) — pick Anthropic or OpenAI and paste an API
+   key: the models that key can use load from the provider (no tokens spent)
+   with the recommended one selected; Connect tests the key and saves a model
+   profile. Skip it to do it later from the dashboard.
 
 Setup signs you straight in. Without the browser:
 `remnantd setup -profile personal -username me` (prints a temporary password;
 add `-password-stdin` to set your own).
+
+### Models and token usage
+
+- **Settings → Model profiles → Load models** lists the models a key can use,
+  with their output-token limits; pick one instead of typing its ID.
+- **Usage** (sidebar) shows the tokens the agents used today and over 7, 30, 90
+  days or all time: per day (chart, or as a table), per model, per agent, and
+  the runs and analyses that used the most. The dashboard's *Tokens today*
+  card links there. Usage is counted from the LLM records.
+- **What is running now**: the indicator in the top bar counts model calls in
+  flight, runs being worked on and analyses still fetching or mining. Click it
+  for the list, with each call's elapsed time; a call in flight also appears as
+  *Running* in the LLM records.
+- **Costs** are estimates: an administrator enters each model's price per
+  million input and output tokens under *Model prices* on the Usage page (as
+  your provider bills them; REMNANT ships no prices). A cost stays blank while
+  a model in it has no price.
 
 ---
 

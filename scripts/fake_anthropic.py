@@ -119,6 +119,17 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the client went away, e.g. remnantd killed by the crash test
 
     def do_GET(self):
+        # GET /v1/models: the model list a profile's key can use.
+        if self.path.split("?")[0] == "/v1/models":
+            if not self.headers.get("Authorization", "").startswith("Bearer sk-ant-"):
+                return self.reply(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}})
+            models = [
+                {"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5 (fake)", "created_at": "2026-09-01T00:00:00Z", "max_tokens": 128000, "lifecycle": "active"},
+                {"type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5 (fake)", "created_at": "2026-09-01T00:00:00Z", "max_tokens": 64000, "lifecycle": "active"},
+                {"type": "model", "id": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5 (fake)", "created_at": "2026-09-01T00:00:00Z", "max_tokens": 64000, "lifecycle": "active"},
+                {"type": "model", "id": "claude-old-4", "display_name": "Claude Old 4 (fake)", "created_at": "2025-01-01T00:00:00Z", "max_tokens": 8192, "lifecycle": "deprecated"},
+            ]
+            return self.reply(200, {"data": models, "has_more": False, "first_id": models[0]["id"], "last_id": models[-1]["id"]})
         # GET /v1/models/{id}: the connection check of a model profile.
         if self.path.startswith("/v1/models/"):
             if not self.headers.get("Authorization", "").startswith("Bearer sk-ant-"):

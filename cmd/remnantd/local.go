@@ -53,7 +53,20 @@ func prepareLocalEnv(log *slog.Logger) error {
 		_ = os.Setenv("REMNANT_REPO_HOSTS", localRepoHosts)
 		log.Info("remote repositories allowed", "hosts", localRepoHosts)
 	}
-	if os.Getenv("REMNANT_DATABASE_URL") != "" {
+	// A database address given once is remembered in the data directory
+	// (mode 0600, next to the master key), so later runs need no variable.
+	saved := filepath.Join(os.Getenv("REMNANT_DATA_DIR"), savedDatabaseFile)
+	if url := os.Getenv("REMNANT_DATABASE_URL"); url != "" {
+		if prev, _ := os.ReadFile(saved); strings.TrimSpace(string(prev)) != url {
+			if err := os.WriteFile(saved, []byte(url+"\n"), 0o600); err == nil {
+				log.Info("database address saved for next time", "file", saved)
+			}
+		}
+		return nil
+	}
+	if b, err := os.ReadFile(saved); err == nil && strings.TrimSpace(string(b)) != "" {
+		_ = os.Setenv("REMNANT_DATABASE_URL", strings.TrimSpace(string(b)))
+		log.Info("using the saved database address", "file", saved)
 		return nil
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -66,6 +79,29 @@ func prepareLocalEnv(log *slog.Logger) error {
 	}
 	_ = os.Setenv("REMNANT_DATABASE_URL", localDBURL)
 	return nil
+}
+
+// savedDatabaseFile holds the REMNANT_DATABASE_URL a local run was last
+// given, in the data directory.
+const savedDatabaseFile = "database-url"
+
+// dockerNeedsRoot explains what to do when this user may not talk to Docker
+// (only `sudo docker` works): start the database once with sudo, then give
+// its address, which is remembered from then on.
+func dockerNeedsRoot(out string) error {
+	if !strings.Contains(out, "permission denied") {
+		return nil
+	}
+	return fmt.Errorf("this user cannot use Docker without sudo.\n"+
+		"Start the database once yourself:\n\n"+
+		"  sudo docker run -d --name %s --restart unless-stopped \\\n"+
+		"    -e POSTGRES_USER=remnant -e POSTGRES_PASSWORD=remnant -e POSTGRES_DB=remnant \\\n"+
+		"    -v %s:/var/lib/postgresql/data -p 127.0.0.1:%s:5432 postgres:17\n\n"+
+		"then run once:\n\n"+
+		"  REMNANT_DATABASE_URL='%s' remnantd local\n\n"+
+		"REMNANT remembers the address after that, so plain `remnantd local` (or scripts/local.sh) works.\n"+
+		"Alternatively add yourself to the docker group: sudo usermod -aG docker $USER (then log in again)",
+		localContainer, localVolume, localDBPort, localDBURL)
 }
 
 // localDataDir is a per-user directory for the master key, snapshots and
@@ -96,6 +132,9 @@ func ensureLocalPostgres(log *slog.Logger) error {
 	case exists:
 		log.Info("starting local database", "container", localContainer)
 		if out, err := docker("start", localContainer); err != nil {
+			if hint := dockerNeedsRoot(out); hint != nil {
+				return hint
+			}
 			return fmt.Errorf("starting %s: %v: %s", localContainer, err, out)
 		}
 	default:
@@ -106,6 +145,9 @@ func ensureLocalPostgres(log *slog.Logger) error {
 			"-p", "127.0.0.1:"+localDBPort+":5432",
 			"postgres:17")
 		if err != nil {
+			if hint := dockerNeedsRoot(out); hint != nil {
+				return hint
+			}
 			return fmt.Errorf("creating the database container: %v: %s", err, out)
 		}
 	}
@@ -155,8 +197,14 @@ func openBrowser(url string) {
 
 // openWhenReady waits for the server's health endpoint, then opens the
 // browser. Used by `remnantd local`.
-func openWhenReady(listen string) {
+// A setup code goes in the URL fragment, which the browser never sends to
+// the server; the setup page fills it in, so a local first run needs no
+// copying from the terminal.
+func openWhenReady(listen, setupCode string) {
 	url := "http://" + listen + "/"
+	if setupCode != "" {
+		url += "#setup=" + setupCode
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		c, err := net.DialTimeout("tcp", listen, time.Second)

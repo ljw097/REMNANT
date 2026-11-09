@@ -4,6 +4,7 @@ import { useI18n, type Key } from "./i18n";
 import { Link, match, navigate, useLocation } from "./router";
 import { Icon, type IconName } from "./ui/Icon";
 import { CommandPalette } from "./ui/CommandPalette";
+import { LiveActivity } from "./ui/LiveActivity";
 import { Button, ToastProvider } from "./ui/components";
 import { SignIn } from "./pages/SignIn";
 import { Setup } from "./pages/Setup";
@@ -20,6 +21,7 @@ import { ReviewQueuePage } from "./pages/Review";
 import { ApprovalsPage } from "./pages/Approvals";
 import { FindingsPage } from "./pages/Findings";
 import { LlmRecordsPage } from "./pages/LlmRecords";
+import { UsagePage } from "./pages/Usage";
 import { ProjectsPage } from "./pages/Projects";
 import { ProjectDetailPage } from "./pages/ProjectDetail";
 import { PatternsPage } from "./pages/Patterns";
@@ -57,6 +59,7 @@ const navGroups: { label: Key; items: NavItem[] }[] = [
       { to: "/reports", icon: "file", label: "nav.reports" },
       { to: "/findings", icon: "findings", label: "nav.findings", count: (s) => s.validated },
       { to: "/llm", icon: "cpu", label: "nav.llm" },
+      { to: "/usage", icon: "chart", label: "nav.usage" },
     ],
   },
   {
@@ -211,6 +214,7 @@ export function Frame({ crumbs, children, actions }: { crumbs: { label: ReactNod
         </button>
         <div className="topbar-actions">
           {actions}
+          <LiveActivity />
           <Button
             variant="ghost"
             iconOnly
@@ -259,6 +263,7 @@ function Routes({ onMenu }: { onMenu: () => void }) {
   if (path === "/approvals") return <ApprovalsPage />;
   if (path === "/findings") return <FindingsPage />;
   if (path === "/llm") return <LlmRecordsPage />;
+  if (path === "/usage") return <UsagePage />;
   if (path === "/projects") return <ProjectsPage />;
   if ((m = match("/projects/:id", path))) return <ProjectDetailPage id={Number(m.id)} />;
   if (path === "/patterns") return <PatternsPage />;

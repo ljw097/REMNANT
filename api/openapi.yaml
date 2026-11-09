@@ -516,13 +516,93 @@ paths:
         '200': { description: Commit, content: { application/json: { schema: { $ref: '#/components/schemas/CommitRecord' } } } }
         '404': { $ref: '#/components/responses/Error' }
 
+  /llm-profiles/models:
+    post:
+      summary: Models an unsaved key can use (admin); no tokens are spent
+      requestBody: { content: { application/json: { schema: { type: object, required: [api_key], properties: { provider: { type: string, enum: [anthropic, openai] }, api_key: { type: string }, base_url: { type: string } } } } } }
+      responses:
+        '200': { description: ok is false with an error when the provider refuses, content: { application/json: { schema: { $ref: '#/components/schemas/ModelList' } } } }
+
+  /llm-profiles/{id}/models:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Models a saved profile's key can use (admin)
+      responses:
+        '200': { description: Models, content: { application/json: { schema: { $ref: '#/components/schemas/ModelList' } } } }
+
+  /usage:
+    get:
+      summary: Token usage from the LLM records, with estimated costs where models have prices
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 0, maximum: 3650 }, description: The last N days including today; 0 or absent is all time }
+        - { name: tz, in: query, schema: { type: string }, description: IANA time zone that days are counted in (default UTC) }
+      responses:
+        '200':
+          description: Totals, today, and rows by day, model, role and source (top 15 runs/analyses by output tokens); cost is null when a model in the row has no price
+          content: { application/json: { schema: { type: object } } }
+
+  /settings/model-prices:
+    get:
+      summary: Model prices in US dollars per million tokens
+      responses:
+        '200': { description: Prices by model ID, content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+    put:
+      summary: Replace the model prices (admin); 0–10000 per million tokens, at most 200 models
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+      responses:
+        '200': { description: Saved prices, content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /activity:
+    get:
+      summary: What is running now — model calls in flight, unfinished runs, repository analyses fetching or mining
+      description: Calls whose process died are marked stopped after an hour (fifteen minutes when the orchestrator starts).
+      responses:
+        '200':
+          description: Current activity, with the server clock so clients can show elapsed time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  calls: { type: array, items: { $ref: '#/components/schemas/ModelCall' } }
+                  runs:
+                    type: array
+                    maxItems: 50
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status: { type: string }
+                        project: { type: string }
+                        auto: { type: boolean }
+                        auto_discover: { type: boolean }
+                        input_tokens: { type: integer }
+                        output_tokens: { type: integer }
+                        max_tokens: { type: integer }
+                        working: { type: boolean, description: A worker holds the run's lease right now }
+                        hypotheses: { type: integer }
+                        created_at: { type: string, format: date-time }
+                  intakes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status: { type: string, enum: [fetching, mining] }
+                        source_uri: { type: string }
+                        commits_found: { type: integer }
+                        commits_read: { type: integer }
+                        created_at: { type: string, format: date-time }
+                  now: { type: string, format: date-time }
+
   /model-calls:
     get:
       summary: The instance-wide LLM record — every agent call, newest first
       parameters:
         - { name: q, in: query, schema: { type: string, maxLength: 200 }, description: Matches subject, result, error, model, or a commit SHA prefix }
         - { name: role, in: query, schema: { type: string, enum: [hypothesis_researcher, skeptic, reporter, historian] } }
-        - { name: outcome, in: query, schema: { type: string, enum: [ok, refused, truncated, error, stopped] } }
+        - { name: outcome, in: query, schema: { type: string, enum: [running, ok, refused, truncated, error, stopped] } }
         - { name: owner, in: query, schema: { type: string, enum: [run, intake] } }
         - { name: run_id, in: query, schema: { type: integer } }
         - { name: intake_id, in: query, schema: { type: integer } }
@@ -1402,6 +1482,25 @@ components:
         error_summary: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ModelList:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              display_name: { type: string }
+              max_output: { type: integer }
+              deprecated: { type: boolean }
+    ModelPrice:
+      type: object
+      properties:
+        input_per_mtok: { type: number, minimum: 0, maximum: 10000 }
+        output_per_mtok: { type: number, minimum: 0, maximum: 10000 }
     ModelCall:
       type: object
       description: One agent call. request (the prompt envelope; the system prompt is not stored) and response are returned only by GET /model-calls/{id}.
@@ -1419,7 +1518,7 @@ components:
         input_tokens: { type: integer }
         output_tokens: { type: integer }
         duration_ms: { type: integer }
-        outcome: { type: string, enum: [ok, refused, truncated, error, stopped] }
+        outcome: { type: string, enum: [running, ok, refused, truncated, error, stopped] }
         result: { type: string, description: What REMNANT made of the answer }
         error: { type: string }
         request: { type: string }

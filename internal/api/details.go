@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ljw097/remnant/internal/store"
 )
@@ -96,7 +97,7 @@ func (s *Server) searchModelCalls(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, oneOf("role", q.Role, "hypothesis_researcher", "skeptic", "reporter", "historian"))
 	}
 	if q.Outcome != "" {
-		checks = append(checks, oneOf("outcome", q.Outcome, "ok", "refused", "truncated", "error", "stopped"))
+		checks = append(checks, oneOf("outcome", q.Outcome, "ok", "running", "refused", "truncated", "error", "stopped"))
 	}
 	if q.Owner != "" {
 		checks = append(checks, oneOf("owner", q.Owner, "run", "intake"))
@@ -131,4 +132,20 @@ func (s *Server) searchModelCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// activity is what is happening right now: runs that have not finished
+// (and whether a worker holds them), analyses still fetching or mining, and
+// model calls in flight.
+func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
+	// A call running for over an hour belongs to a process that stopped.
+	if _, err := s.store.ExpireRunningCalls(r.Context(), time.Hour); err != nil {
+		s.log.Warn("expire running model calls", "err", err)
+	}
+	a, err := s.store.Activity(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
 }

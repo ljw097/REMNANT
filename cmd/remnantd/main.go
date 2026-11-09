@@ -134,11 +134,12 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths
 	case "reset-password":
 		return resetPassword(ctx, st, args)
 	}
-	if err := announceSetup(ctx, log, st, cfg); err != nil {
+	code, err := announceSetup(ctx, log, st, cfg)
+	if err != nil {
 		return err
 	}
 	if openLocal {
-		go openWhenReady(cfg.ListenAddr)
+		go openWhenReady(cfg.ListenAddr, code)
 	}
 	return serve(ctx, log, st, cfg, paths)
 }
@@ -146,18 +147,20 @@ func run(ctx context.Context, log *slog.Logger, cmd string, args []string, paths
 // announceSetup prints a one-time setup code while the instance has no
 // users. Whoever completes setup in the web UI must have read the server's
 // log, so reaching the port first is not enough to claim the instance.
-func announceSetup(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config) error {
+// It returns the code ("" once set up) so `remnantd local` can hand it to
+// the browser it opens.
+func announceSetup(ctx context.Context, log *slog.Logger, st *store.Store, cfg config.Config) (string, error) {
 	n, err := st.UserCount(ctx)
 	if err != nil || n > 0 {
-		return err
+		return "", err
 	}
 	code, err := st.NewSetupCode(ctx, 24*time.Hour)
 	if err != nil {
-		return err
+		return "", err
 	}
 	log.Warn("first-run setup required", "url", "http://"+cfg.ListenAddr+"/", "setup_code", code, "expires_in", "24h")
 	fmt.Fprintf(os.Stderr, "\n  REMNANT first-run setup\n  Open http://%s/ and enter this setup code: %s\n  (or run: remnantd setup -profile personal|team|managed -username NAME)\n\n", cfg.ListenAddr, code)
-	return nil
+	return code, nil
 }
 
 func setupCommand(ctx context.Context, st *store.Store, args []string) error {

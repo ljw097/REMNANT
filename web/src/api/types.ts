@@ -455,6 +455,14 @@ export interface Intake {
   updated_at: string;
 }
 
+/** A model a key can use, from GET/POST …/models. */
+export interface ModelChoice {
+  id: string;
+  display_name: string;
+  max_output?: number;
+  deprecated?: boolean;
+}
+
 /** One recorded agent call. request/response come only from GET /model-calls/{id}. */
 export interface ModelCall {
   id: number;
@@ -470,7 +478,7 @@ export interface ModelCall {
   input_tokens: number;
   output_tokens: number;
   duration_ms: number;
-  outcome: "ok" | "refused" | "truncated" | "error" | "stopped";
+  outcome: "running" | "ok" | "refused" | "truncated" | "error" | "stopped";
   result: string;
   error: string;
   request?: string;
