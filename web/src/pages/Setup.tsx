@@ -5,6 +5,7 @@ import { useI18n, type Key, type Lang } from "../i18n";
 import type { Gate } from "../session";
 import { Alert, Button, Field, Segmented } from "../ui/components";
 import { Icon } from "../ui/Icon";
+import { ConnectModel } from "../ui/QuickStart";
 import { fallbackPresets, PolicyEditor } from "../ui/policy";
 import { NewPasswordFields, passwordProblem } from "./Password";
 
@@ -12,13 +13,19 @@ import { NewPasswordFields, passwordProblem } from "./Password";
 export function Setup({ lang, setLang, onSignedIn, status }: Gate) {
   const { t } = useI18n();
   const presets = status?.presets ?? fallbackPresets;
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [policy, setPolicy] = useState<InstancePolicy | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [instanceName, setInstanceName] = useState("");
-  const [code, setCode] = useState("");
+  // `remnantd local` opens this page with the setup code in the URL fragment
+  // (never sent to the server); take it and clear it from the address bar.
+  const [code, setCode] = useState(() => {
+    const m = /(?:^#|&)setup=([A-Za-z0-9-]{8,32})/.exec(location.hash);
+    if (m) history.replaceState(null, "", location.pathname + location.search);
+    return m ? m[1]! : "";
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const usernameOk = /^[a-z0-9][a-z0-9._-]{1,63}$/.test(username);
@@ -31,7 +38,8 @@ export function Setup({ lang, setLang, onSignedIn, status }: Gate) {
     setError(undefined);
     try {
       await post("/setup", { code, username, password, instance_name: instanceName.trim(), policy });
-      await onSignedIn();
+      // Signed in as the new administrator: connect a model before entering.
+      setStep(3);
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) setError(t("setup.error.code"));
       else if (err instanceof ApiError && err.status === 409) setError(t("setup.error.done"));
@@ -57,9 +65,9 @@ export function Setup({ lang, setLang, onSignedIn, status }: Gate) {
           </p>
         </div>
         <ol aria-label={t("setup.steps")}>
-          {([1, 2] as const).map((n) => (
+          {([1, 2, 3] as const).map((n) => (
             <li key={n} aria-current={step === n ? "step" : undefined} style={{ color: step === n ? "var(--ink)" : undefined }}>
-              <Icon name={step > n ? "check" : n === 1 ? "users" : "key"} />
+              <Icon name={step > n ? "check" : n === 1 ? "users" : n === 2 ? "key" : "cpu"} />
               <span>
                 <strong>{t(`setup.step${n}` as Key)}</strong>
                 <br />
@@ -123,6 +131,21 @@ export function Setup({ lang, setLang, onSignedIn, status }: Gate) {
                 </Button>
               </div>
             </form>
+          ) : null}
+
+          {step === 3 ? (
+            <div className="stack" style={{ gap: 16 }}>
+              <Alert tone="ok" icon="check">
+                {t("setup.done")}
+              </Alert>
+              <p className="ink-2">{t("setup.modelIntro")}</p>
+              <ConnectModel onConnected={() => void onSignedIn()} />
+              <div className="row" style={{ justifyContent: "flex-end" }}>
+                <Button variant="ghost" icon="arrowRight" onClick={() => void onSignedIn()}>
+                  {t("setup.skipModel")}
+                </Button>
+              </div>
+            </div>
           ) : null}
         </div>
       </main>

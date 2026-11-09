@@ -3,29 +3,14 @@
 // configuration.
 
 import { useEffect, useState } from "react";
-import { del, patch, post, put } from "../api/client";
-import type { Agent, LabLimits, LLMProfile, ModelOptions, ProfileCheck, ResearchSettings, ResearchSettingsResponse, SystemConfig } from "../api/types";
+import { del, get, patch, post, put } from "../api/client";
+import type { Agent, LabLimits, LLMProfile, ModelChoice, ModelOptions, ProfileCheck, ResearchSettings, ResearchSettingsResponse, SystemConfig } from "../api/types";
 import { useApi } from "../hooks";
 import { useI18n, type Key } from "../i18n";
 import { Alert, Button, ConfirmButton, Drawer, Empty, errorText, Field, Panel, SkeletonRows, Time, useToast } from "../ui/components";
+import { providerInfo, providers, type Provider } from "../ui/providers";
+import { loadModels, ModelPicker, recommendedModel } from "../ui/QuickStart";
 
-export type Provider = "anthropic" | "openai";
-export const providers: Provider[] = ["anthropic", "openai"];
-
-// Per-provider model suggestions, a sensible default model, and the base URL
-// and key-hint shown as placeholders. The model field stays free text.
-export const providerInfo: Record<Provider, { models: string[]; baseUrl: string; keyHint: string }> = {
-  anthropic: {
-    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
-    baseUrl: "https://api.anthropic.com",
-    keyHint: "sk-ant-…",
-  },
-  openai: {
-    models: ["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
-    baseUrl: "https://api.openai.com/v1",
-    keyHint: "sk-…",
-  },
-};
 const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /* ---------- Model profiles ---------- */
@@ -180,16 +165,32 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [check, setCheck] = useState<ProfileCheck | "busy" | null>(null);
+  // The models the key can use: from the key just typed, or the saved key when editing.
+  const [modelList, setModelList] = useState<{ models: ModelChoice[] } | { error: string } | "busy" | null>(null);
+  const loadList = async () => {
+    setModelList("busy");
+    try {
+      const r: { ok: boolean; models: ModelChoice[]; error?: string } = f.api_key
+        ? await loadModels(f.provider, f.api_key, f.base_url)
+        : await get(`/llm-profiles/${profile!.id}/models`);
+      setModelList(r.ok ? { models: r.models } : { error: r.error ?? "" });
+      if (r.ok && !profile && !r.models.some((m) => m.id === f.model)) set({ model: recommendedModel(f.provider, r.models) });
+    } catch (e) {
+      setModelList({ error: errorText(e, t) });
+    }
+  };
   useEffect(() => {
     if (open) {
       setF(draftOf(profile));
       setError(undefined);
       setCheck(null);
+      setModelList(null);
     }
   }, [open, profile]);
   const set = (p: Partial<ModelDraft>) => {
     setF((x) => ({ ...x, ...p }));
     setCheck(null);
+    if ("provider" in p || "api_key" in p || "base_url" in p) setModelList(null);
   };
   const timeoutBad = f.timeout !== "" && (Number(f.timeout) < 10 || Number(f.timeout) > 900);
   const retriesBad = f.retries !== "" && (Number(f.retries) < 0 || Number(f.retries) > 10 || !Number.isInteger(Number(f.retries)));
@@ -265,19 +266,20 @@ function ModelForm({ profile, open, onClose, onSaved }: { profile: LLMProfile | 
             </select>
           )}
         </Field>
+        <Field
+          label={t("models.model")}
+          hint={modelList === "busy" ? t("quick.loadingModels") : modelList && "error" in modelList ? t("models.loadFailed", { error: modelList.error }) : modelList ? t("quick.modelsLoaded", { n: modelList.models.length }) : t(`models.modelHint.${f.provider}` as Key)}
+        >
+          {(id) => (
+            <div className="quick-row">
+              <ModelPicker id={id} provider={f.provider} value={f.model} models={modelList && modelList !== "busy" && "models" in modelList ? modelList.models : null} onChange={(v) => set({ model: v })} />
+              <Button icon="refresh" loading={modelList === "busy"} disabled={!f.api_key && !profile} onClick={() => void loadList()} title={t("models.loadModelsHint")}>
+                {t("models.loadModels")}
+              </Button>
+            </div>
+          )}
+        </Field>
         <div className="form-grid two">
-          <Field label={t("models.model")} hint={t(`models.modelHint.${f.provider}` as Key)}>
-            {(id) => (
-              <>
-                <input id={id} className="input mono" list="model-suggestions" value={f.model} maxLength={200} spellCheck={false} onChange={(e) => set({ model: e.target.value })} />
-                <datalist id="model-suggestions">
-                  {providerInfo[f.provider].models.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              </>
-            )}
-          </Field>
           <Field label={t("models.effort")} hint={t("models.effortHint")}>
             {(id) => (
               <select id={id} className="select" value={f.effort} onChange={(e) => set({ effort: e.target.value })}>

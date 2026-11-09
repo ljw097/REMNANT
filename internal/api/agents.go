@@ -282,3 +282,51 @@ func (s *Server) systemConfig(w http.ResponseWriter, r *http.Request) {
 		"update_repo":              c.UpdateRepo,
 	})
 }
+
+// listUnsavedModels lists the models a key can use before a profile is
+// saved, so the model can be picked instead of typed. No tokens are spent.
+func (s *Server) listUnsavedModels(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Provider string `json:"provider"`
+		BaseURL  string `json:"base_url"`
+		APIKey   string `json:"api_key"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Provider == "" {
+		in.Provider = "anthropic"
+	}
+	if !validate(w, oneOf("provider", in.Provider, "anthropic", "openai"), required("api_key", in.APIKey, 4096),
+		maxLen("base_url", in.BaseURL, 2048), checkBaseURL(in.BaseURL)) {
+		return
+	}
+	s.listModels(w, r, llm.Profile{Provider: in.Provider, BaseURL: in.BaseURL, APIKey: in.APIKey})
+}
+
+// listProfileModels lists the models a saved profile's key can use.
+func (s *Server) listProfileModels(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	creds, err := s.store.LLMCredentials(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.listModels(w, r, creds)
+}
+
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request, p llm.Profile) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	zero := 0
+	p.Options.MaxRetries = &zero
+	models, err := llm.ListModels(ctx, p)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "models": []llm.ModelChoice{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": models})
+}

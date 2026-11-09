@@ -30,6 +30,7 @@ const pages: { label: Key; icon: IconName; to: string; admin?: boolean }[] = [
   { label: "nav.reports", icon: "file", to: "/reports" },
   { label: "nav.findings", icon: "findings", to: "/findings" },
   { label: "nav.llm", icon: "cpu", to: "/llm" },
+  { label: "nav.usage", icon: "chart", to: "/usage" },
   { label: "nav.projects", icon: "projects", to: "/projects" },
   { label: "nav.patterns", icon: "patterns", to: "/patterns" },
   { label: "settings.models", icon: "key", to: "/settings/models", admin: true },

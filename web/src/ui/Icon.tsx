@@ -54,6 +54,7 @@ const paths = {
   layout: "M3 4h18v16H3zM3 9h18M9 9v11",
   archive: "M3 5h18v4H3zM5 9v10h14V9M10 13h4",
   target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
+  chart: "M3 20h18M7 16v-5M12 16V6M17 16v-8",
   cpu: "M7 7h10v10H7zM10 2v3M14 2v3M10 19v3M14 19v3M2 10h3M2 14h3M19 10h3M19 14h3",
 } as const;
 

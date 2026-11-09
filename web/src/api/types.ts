@@ -455,6 +455,14 @@ export interface Intake {
   updated_at: string;
 }
 
+/** A model a key can use, from GET/POST …/models. */
+export interface ModelChoice {
+  id: string;
+  display_name: string;
+  max_output?: number;
+  deprecated?: boolean;
+}
+
 /** One recorded agent call. request/response come only from GET /model-calls/{id}. */
 export interface ModelCall {
   id: number;

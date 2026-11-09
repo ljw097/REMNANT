@@ -516,6 +516,43 @@ paths:
         '200': { description: Commit, content: { application/json: { schema: { $ref: '#/components/schemas/CommitRecord' } } } }
         '404': { $ref: '#/components/responses/Error' }
 
+  /llm-profiles/models:
+    post:
+      summary: Models an unsaved key can use (admin); no tokens are spent
+      requestBody: { content: { application/json: { schema: { type: object, required: [api_key], properties: { provider: { type: string, enum: [anthropic, openai] }, api_key: { type: string }, base_url: { type: string } } } } } }
+      responses:
+        '200': { description: ok is false with an error when the provider refuses, content: { application/json: { schema: { $ref: '#/components/schemas/ModelList' } } } }
+
+  /llm-profiles/{id}/models:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Models a saved profile's key can use (admin)
+      responses:
+        '200': { description: Models, content: { application/json: { schema: { $ref: '#/components/schemas/ModelList' } } } }
+
+  /usage:
+    get:
+      summary: Token usage from the LLM records, with estimated costs where models have prices
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 0, maximum: 3650 }, description: The last N days including today; 0 or absent is all time }
+        - { name: tz, in: query, schema: { type: string }, description: IANA time zone that days are counted in (default UTC) }
+      responses:
+        '200':
+          description: Totals, today, and rows by day, model, role and source (top 15 runs/analyses by output tokens); cost is null when a model in the row has no price
+          content: { application/json: { schema: { type: object } } }
+
+  /settings/model-prices:
+    get:
+      summary: Model prices in US dollars per million tokens
+      responses:
+        '200': { description: Prices by model ID, content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+    put:
+      summary: Replace the model prices (admin); 0–10000 per million tokens, at most 200 models
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+      responses:
+        '200': { description: Saved prices, content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
+        '422': { $ref: '#/components/responses/Error' }
+
   /model-calls:
     get:
       summary: The instance-wide LLM record — every agent call, newest first
@@ -1402,6 +1439,25 @@ components:
         error_summary: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ModelList:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              display_name: { type: string }
+              max_output: { type: integer }
+              deprecated: { type: boolean }
+    ModelPrice:
+      type: object
+      properties:
+        input_per_mtok: { type: number, minimum: 0, maximum: 10000 }
+        output_per_mtok: { type: number, minimum: 0, maximum: 10000 }
     ModelCall:
       type: object
       description: One agent call. request (the prompt envelope; the system prompt is not stored) and response are returned only by GET /model-calls/{id}.
