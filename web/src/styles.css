@@ -913,3 +913,15 @@ button.statcard { font: inherit; text-align: left; cursor: pointer; }
 .usage-chart g:focus-visible { outline: none; }
 .usage-chart g:focus-visible .usage-bar { stroke: var(--ink); stroke-width: 2; }
 .price-input { max-width: 140px; }
+
+/* Live activity */
+.live-btn { gap: 6px; font-variant-numeric: tabular-nums; }
+.live-btn .live-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--rule-strong); }
+.live-btn[data-live] .live-pulse { background: var(--info); animation: live-pulse 1.6s ease-in-out infinite; }
+.live-btn[data-live] { color: var(--ink); }
+@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .live-btn[data-live] .live-pulse { animation: none; } }
+.live-budget { display: inline-flex; align-items: center; gap: 6px; }
+.live-budget-bar { display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.live-budget-bar > span { display: block; height: 100%; background: var(--info); border-radius: 3px; }
+@media (max-width: 640px) { .live-btn { padding-inline: 8px; } }

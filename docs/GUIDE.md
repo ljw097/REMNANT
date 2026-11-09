@@ -125,6 +125,10 @@ add `-password-stdin` to set your own).
   days or all time: per day (chart, or as a table), per model, per agent, and
   the runs and analyses that used the most. The dashboard's *Tokens today*
   card links there. Usage is counted from the LLM records.
+- **What is running now**: the indicator in the top bar counts model calls in
+  flight, runs being worked on and analyses still fetching or mining. Click it
+  for the list, with each call's elapsed time; a call in flight also appears as
+  *Running* in the LLM records.
 - **Costs** are estimates: an administrator enters each model's price per
   million input and output tokens under *Model prices* on the Usage page (as
   your provider bills them; REMNANT ships no prices). A cost stays blank while

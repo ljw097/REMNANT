@@ -18,6 +18,7 @@ export function RoleName({ role }: { role: string }) {
 }
 
 const outcomeTone: Record<ModelCall["outcome"], [string, string]> = {
+  running: ["info", "live"],
   ok: ["ok", "solid"],
   refused: ["warn", "stopped"],
   truncated: ["bad", "stopped"],
@@ -202,7 +203,7 @@ export function ModelCallDrawer({ id, onClose }: { id: number | null; onClose: (
               <h3 className="detail-h">{t("detail.call.response")}</h3>
               <CopyButton text={c.response == null ? "" : JSON.stringify(c.response, null, 2)} />
             </div>
-            {c.response == null ? <p className="small muted">{t("detail.call.noResponse")}</p> : <pre className="detail-pre">{JSON.stringify(c.response, null, 2)}</pre>}
+            {c.response == null ? <p className="small muted">{c.outcome === "running" ? t("detail.call.stillRunning") : t("detail.call.noResponse")}</p> : <pre className="detail-pre">{JSON.stringify(c.response, null, 2)}</pre>}
           </section>
           <section className="stack" style={{ gap: 6 }}>
             <div className="row">

@@ -120,6 +120,7 @@ function regionOutcome(e: Evidence, calls: ModelCall[] | undefined): string {
   const o = (e.metadata as CandMeta | null)?.outcome;
   if (o && ["declined", "invalid", "duplicate", "refused"].includes(o)) return o;
   if (calls?.some((c) => c.hypothesis_id)) return "hypothesis";
+  if (calls?.some((c) => c.outcome === "running")) return "running";
   if (calls?.some((c) => c.outcome === "error" || c.outcome === "truncated")) return "failed";
   if (o) return "hypothesis"; // marked in the same transaction as the hypothesis
   return "pending";

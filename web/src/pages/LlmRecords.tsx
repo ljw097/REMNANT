@@ -26,7 +26,7 @@ interface Page {
 }
 
 const roles = ["hypothesis_researcher", "skeptic", "historian", "reporter"] as const;
-const outcomes = ["ok", "refused", "truncated", "error", "stopped"] as const;
+const outcomes = ["running", "ok", "refused", "truncated", "error", "stopped"] as const;
 const filterKeys = ["q", "role", "outcome", "owner", "run_id", "intake_id"] as const;
 
 export function LlmRecordsPage() {
@@ -72,8 +72,8 @@ export function LlmRecordsPage() {
 
   const st = first.data?.stats;
   const rows = [...(first.data?.calls ?? []), ...older.filter((o) => !(first.data?.calls ?? []).some((c) => c.id === o.id))];
-  const notOk = st ? st.calls - (st.by_outcome.ok ?? 0) : 0;
-  const firstNotOk = outcomes.find((o) => o !== "ok" && (st?.by_outcome[o] ?? 0) > 0) ?? "";
+  const notOk = st ? st.calls - (st.by_outcome.ok ?? 0) - (st.by_outcome.running ?? 0) : 0;
+  const firstNotOk = outcomes.find((o) => o !== "ok" && o !== "running" && (st?.by_outcome[o] ?? 0) > 0) ?? "";
   const filtered = qs !== "";
 
   return (
@@ -96,7 +96,7 @@ export function LlmRecordsPage() {
           <span className="statcard-sub">
             {st
               ? outcomes
-                  .filter((o) => o !== "ok" && (st.by_outcome[o] ?? 0) > 0)
+                  .filter((o) => o !== "ok" && o !== "running" && (st.by_outcome[o] ?? 0) > 0)
                   .map((o) => `${t(`detail.outcome.${o}` as Key)} ${st.by_outcome[o]}`)
                   .join(" · ") || " "
               : " "}

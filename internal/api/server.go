@@ -113,6 +113,7 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, updates *update.M
 	api.HandleFunc("GET /api/v1/intakes/{id}/commits/{sha}", s.intakeCommit)
 	api.HandleFunc("GET /api/v1/model-calls", s.searchModelCalls)
 	api.HandleFunc("GET /api/v1/usage", s.usage)
+	api.HandleFunc("GET /api/v1/activity", s.activity)
 	api.HandleFunc("GET /api/v1/settings/model-prices", s.getModelPrices)
 	api.HandleFunc("PUT /api/v1/settings/model-prices", s.requireRole(s.setModelPrices, auth.RoleAdmin))
 	api.HandleFunc("GET /api/v1/model-calls/{id}", s.getModelCall)

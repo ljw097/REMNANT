@@ -84,6 +84,12 @@ func New(st *store.Store, cfg config.Config, log *slog.Logger, opts Options) *Or
 // in progress to stop.
 func (o *Orchestrator) Run(ctx context.Context) {
 	o.log.Info("orchestrator started", "owner", o.owner, "concurrency", o.opts.Concurrency, "worker", o.opts.Worker != nil)
+	// Calls left running by a process that stopped will never return.
+	if n, err := o.store.ExpireRunningCalls(ctx, 15*time.Minute); err != nil {
+		o.log.Warn("expire running model calls", "err", err)
+	} else if n > 0 {
+		o.log.Info("closed model calls left running by a stopped server", "calls", n)
+	}
 	sem := make(chan struct{}, o.opts.Concurrency)
 	var wg sync.WaitGroup
 	defer wg.Wait()

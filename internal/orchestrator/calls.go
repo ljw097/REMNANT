@@ -63,27 +63,41 @@ type callRef struct {
 	CommitSHA                string
 }
 
-// complete makes one model call and records it in model_calls: the prompt
+// complete makes one model call and records it in model_calls (as running
+// when it starts, completed when it returns): the prompt
 // envelope, the answer, tokens, duration and how the call ended. The call
 // ID is returned so the caller can record what it made of the answer.
 // Recording never fails the call.
 func (o *Orchestrator) complete(ctx context.Context, a *agent, ref callRef, req llm.Request) (llm.Response, int64, error) {
-	start := time.Now()
-	resp, err := a.client.CompleteJSON(ctx, req)
 	in := store.ModelCallInput{
 		RunID: ref.RunID, IntakeID: ref.IntakeID, Role: a.role, Subject: ref.Subject,
 		EvidenceID: ref.EvidenceID, HypothesisID: ref.HypothesisID, CommitSHA: ref.CommitSHA, Model: a.model,
-		MaxTokens: req.MaxTokens, InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens,
-		Duration: time.Since(start), Outcome: callOutcome(ctx, err), Request: req.Input, Response: resp.JSON,
+		MaxTokens: req.MaxTokens, Outcome: "running", Request: req.Input,
 	}
+	// Recorded before the call, so it shows as running while in flight.
+	bg, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	id, rerr := o.store.InsertModelCall(bg, in)
+	done()
+	if rerr != nil {
+		o.log.Warn("record model call", "role", a.role, "err", rerr)
+	}
+
+	start := time.Now()
+	resp, err := a.client.CompleteJSON(ctx, req)
+	in.InputTokens, in.OutputTokens, in.Response = resp.InputTokens, resp.OutputTokens, resp.JSON
+	in.Duration, in.Outcome = time.Since(start), callOutcome(ctx, err)
 	if err != nil {
 		in.Error = err.Error()
 	}
-	bg, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	bg, done = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer done()
-	id, rerr := o.store.InsertModelCall(bg, in)
+	if id != 0 {
+		rerr = o.store.FinishModelCall(bg, id, in)
+	} else {
+		id, rerr = o.store.InsertModelCall(bg, in)
+	}
 	if rerr != nil {
-		o.log.Warn("record model call", "role", a.role, "err", rerr)
+		o.log.Warn("record model call result", "role", a.role, "err", rerr)
 	}
 	return resp, id, err
 }

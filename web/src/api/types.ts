@@ -478,7 +478,7 @@ export interface ModelCall {
   input_tokens: number;
   output_tokens: number;
   duration_ms: number;
-  outcome: "ok" | "refused" | "truncated" | "error" | "stopped";
+  outcome: "running" | "ok" | "refused" | "truncated" | "error" | "stopped";
   result: string;
   error: string;
   request?: string;

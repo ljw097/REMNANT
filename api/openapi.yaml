@@ -553,13 +553,56 @@ paths:
         '200': { description: Saved prices, content: { application/json: { schema: { type: object, additionalProperties: { $ref: '#/components/schemas/ModelPrice' } } } } }
         '422': { $ref: '#/components/responses/Error' }
 
+  /activity:
+    get:
+      summary: What is running now — model calls in flight, unfinished runs, repository analyses fetching or mining
+      description: Calls whose process died are marked stopped after an hour (fifteen minutes when the orchestrator starts).
+      responses:
+        '200':
+          description: Current activity, with the server clock so clients can show elapsed time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  calls: { type: array, items: { $ref: '#/components/schemas/ModelCall' } }
+                  runs:
+                    type: array
+                    maxItems: 50
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status: { type: string }
+                        project: { type: string }
+                        auto: { type: boolean }
+                        auto_discover: { type: boolean }
+                        input_tokens: { type: integer }
+                        output_tokens: { type: integer }
+                        max_tokens: { type: integer }
+                        working: { type: boolean, description: A worker holds the run's lease right now }
+                        hypotheses: { type: integer }
+                        created_at: { type: string, format: date-time }
+                  intakes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status: { type: string, enum: [fetching, mining] }
+                        source_uri: { type: string }
+                        commits_found: { type: integer }
+                        commits_read: { type: integer }
+                        created_at: { type: string, format: date-time }
+                  now: { type: string, format: date-time }
+
   /model-calls:
     get:
       summary: The instance-wide LLM record — every agent call, newest first
       parameters:
         - { name: q, in: query, schema: { type: string, maxLength: 200 }, description: Matches subject, result, error, model, or a commit SHA prefix }
         - { name: role, in: query, schema: { type: string, enum: [hypothesis_researcher, skeptic, reporter, historian] } }
-        - { name: outcome, in: query, schema: { type: string, enum: [ok, refused, truncated, error, stopped] } }
+        - { name: outcome, in: query, schema: { type: string, enum: [running, ok, refused, truncated, error, stopped] } }
         - { name: owner, in: query, schema: { type: string, enum: [run, intake] } }
         - { name: run_id, in: query, schema: { type: integer } }
         - { name: intake_id, in: query, schema: { type: integer } }
@@ -1475,7 +1518,7 @@ components:
         input_tokens: { type: integer }
         output_tokens: { type: integer }
         duration_ms: { type: integer }
-        outcome: { type: string, enum: [ok, refused, truncated, error, stopped] }
+        outcome: { type: string, enum: [running, ok, refused, truncated, error, stopped] }
         result: { type: string, description: What REMNANT made of the answer }
         error: { type: string }
         request: { type: string }

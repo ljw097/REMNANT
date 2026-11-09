@@ -55,6 +55,8 @@ Run activity uses `GET /runs/{id}/events` read with `fetch()` and a streaming bo
 
 ## Screens
 
+The top bar shows what is running now on every screen: a count of model calls in flight, runs a worker is working on and repository analyses fetching or mining. It opens a panel listing each call (agent, subject, model, elapsed time; opens the call), every unfinished run (stage, working or waiting, hypotheses so far, output-token budget) and each analysis in progress. It refreshes every 3 seconds while open, 10 seconds otherwise.
+
 | Path | Purpose |
 |---|---|
 | `/` | Dashboard. While the instance has no projects it shows only the start form (connect a model with one API key if none exists, then paste a repository URL). Afterwards: waiting for you (triage and lab approvals), runs in motion as transit lines, recent findings, recent runs, projects, system. |

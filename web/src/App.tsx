@@ -4,6 +4,7 @@ import { useI18n, type Key } from "./i18n";
 import { Link, match, navigate, useLocation } from "./router";
 import { Icon, type IconName } from "./ui/Icon";
 import { CommandPalette } from "./ui/CommandPalette";
+import { LiveActivity } from "./ui/LiveActivity";
 import { Button, ToastProvider } from "./ui/components";
 import { SignIn } from "./pages/SignIn";
 import { Setup } from "./pages/Setup";
@@ -213,6 +214,7 @@ export function Frame({ crumbs, children, actions }: { crumbs: { label: ReactNod
         </button>
         <div className="topbar-actions">
           {actions}
+          <LiveActivity />
           <Button
             variant="ghost"
             iconOnly

@@ -99,7 +99,7 @@ func (s *Store) usageParts(ctx context.Context, key, label, from, cond string, a
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+key+`, `+label+`, min(mc.run_id), min(mc.intake_id), mc.model,
 		       count(*), COALESCE(sum(mc.input_tokens), 0), COALESCE(sum(mc.output_tokens), 0),
-		       COALESCE(sum(mc.duration_ms), 0), count(*) FILTER (WHERE mc.outcome <> 'ok')
+		       COALESCE(sum(mc.duration_ms), 0), count(*) FILTER (WHERE mc.outcome NOT IN ('ok', 'running'))
 		FROM model_calls mc `+from+`
 		WHERE `+cond+`
 		GROUP BY 1, 2, mc.model`, args...)
